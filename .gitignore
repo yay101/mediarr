@@ -1,0 +1,21 @@
+# Binaries
+mediarr
+mediarr_bin
+
+# Databases
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Configuration
+config.yaml
+
+# Data
+downloads/
+library/
+temp/
+certs/
+
+# OS files
+.DS_Store

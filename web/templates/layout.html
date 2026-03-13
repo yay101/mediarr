@@ -1,0 +1,510 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mediarr</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nicokant/basecoat@0.2.1/dist/basecoat.min.css">
+    <style>
+        :root {
+            --sidebar-width: 240px;
+            --primary-color: #2196f3;
+        }
+        body {
+            display: flex;
+            min-height: 100vh;
+            margin: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        aside {
+            width: var(--sidebar-width);
+            background: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+            padding: 1.5rem;
+            position: fixed;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        main {
+            margin-left: var(--sidebar-width);
+            flex: 1;
+            padding: 2rem;
+            max-width: 1200px;
+        }
+        h2 { margin-top: 0; color: var(--primary-color); }
+        nav ul { list-style: none; padding: 0; margin: 2rem 0; }
+        nav li { margin-bottom: 0.5rem; }
+        nav a {
+            text-decoration: none;
+            color: #495057;
+            display: block;
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+        nav a:hover, nav a.active {
+            background: #e9ecef;
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+        .card {
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 10px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.6rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: #e9ecef;
+            color: #495057;
+        }
+        .status-4 { background: #d1e7dd; color: #0f5132; } /* Available */
+        .status-1 { background: #fff3cd; color: #664d03; } /* Queued */
+        .status-2 { background: #cff4fc; color: #055160; } /* Searching */
+        .status-3 { background: #cfe2ff; color: #084298; } /* Downloading */
+        
+        .progress-bar {
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.3s;
+        }
+        
+        button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        button.secondary { background: #6c757d; }
+        button.danger { background: #dc3545; }
+        
+        input[type="text"] {
+            padding: 0.6rem;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 1rem; border-bottom: 1px solid #dee2e6; }
+        
+        .modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 90%;
+        }
+    </style>
+</head>
+<body>
+    <aside>
+        <h2>Mediarr</h2>
+        <nav>
+            <ul>
+                <li><a href="/" data-link>Dashboard</a></li>
+                <li><a href="/movies" data-link>Movies</a></li>
+                <li><a href="/tv" data-link>TV Shows</a></li>
+                <li><a href="/downloads" data-link>Downloads</a></li>
+                <li><a href="/search" data-link>Search</a></li>
+                <li><a href="/rss" data-link title="Admin only">RSS Feeds</a></li>
+                <li><a href="/settings" data-link title="Admin only">Settings</a></li>
+            </ul>
+        </nav>
+        <div style="position: absolute; bottom: 1.5rem; left: 1.5rem; right: 1.5rem;">
+            <div id="user-info" style="font-size: 0.9rem; margin-bottom: 0.5rem; color: #6c757d;">Loading...</div>
+            <button class="secondary" style="width: 100%" onclick="logout(event)">Logout</button>
+        </div>
+    </aside>
+
+    <main>
+        <div id="content">Loading...</div>
+    </main>
+
+    <div id="modal" class="modal" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+        const app = document.getElementById('content');
+        const modal = document.getElementById('modal');
+        
+        const routes = {
+            '/': renderDashboard,
+            '/movies': renderMovies,
+            '/tv': renderTV,
+            '/downloads': renderDownloads,
+            '/search': renderSearch,
+            '/rss': renderRSS,
+            '/settings': renderSettings
+        };
+
+        function navigate(path) {
+            window.history.pushState({}, path, window.location.origin + path);
+            handleRoute();
+        }
+
+        async function handleRoute() {
+            const path = window.location.pathname;
+            const renderer = routes[path] || renderNotFound;
+            
+            document.querySelectorAll('[data-link]').forEach(link => {
+                link.classList.toggle('active', link.getAttribute('href') === path);
+            });
+
+            app.innerHTML = '<div class="loader">Loading...</div>';
+            try {
+                await renderer();
+            } catch (err) {
+                app.innerHTML = `<div class="card" style="border-color: #dc3545;">
+                    <h3 style="color: #dc3545;">Error</h3>
+                    <p>${err.message}</p>
+                    <button onclick="handleRoute()">Retry</button>
+                </div>`;
+            }
+        }
+
+        window.onpopstate = handleRoute;
+        document.addEventListener('click', e => {
+            const link = e.target.closest('[data-link]');
+            if (link) {
+                e.preventDefault();
+                navigate(link.getAttribute('href'));
+            }
+        });
+
+        function showModal(html) {
+            document.getElementById('modal-body').innerHTML = html;
+            modal.style.display = 'flex';
+        }
+        function closeModal() { modal.style.display = 'none'; }
+
+        // Auth
+        let currentUser = null;
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/v1/auth/me');
+                const data = await res.json();
+                if (!data.authenticated) {
+                    window.location.href = '/login'; // Show login choices
+                    return;
+                }
+                currentUser = data.user;
+                document.getElementById('user-info').innerText = `${data.user.username} (${data.user.role})`;
+                
+                // Hide admin links if not admin
+                if (data.user.role !== 'admin') {
+                    document.querySelectorAll('a[href="/rss"], a[href="/settings"]').forEach(el => el.parentElement.style.display = 'none');
+                }
+            } catch (e) {
+                console.error("Auth check failed", e);
+            }
+        }
+
+        async function logout(e) {
+            e.preventDefault();
+            await fetch('/api/v1/auth/logout', { method: 'POST' });
+            window.location.reload();
+        }
+
+        // Dashboard
+        async function renderDashboard() {
+            app.innerHTML = '<h1>Dashboard</h1>';
+            const res = await fetch('/api/v1/calendar');
+            const eps = await res.json();
+            
+            let html = '<h3>Airing Soon</h3><div class="grid">';
+            if (eps && eps.length > 0) {
+                eps.forEach(ep => {
+                    html += `
+                        <div class="card">
+                            <strong>${ep.Title || 'Unknown Episode'}</strong><br>
+                            <span class="badge">S${String(ep.Season).padStart(2, '0')}E${String(ep.Episode).padStart(2, '0')}</span><br>
+                            <small>${new Date(ep.AirDate).toLocaleDateString()}</small>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<p>No upcoming episodes in the next 30 days.</p>';
+            }
+            html += '</div>';
+            app.innerHTML += html;
+        }
+
+        // Media
+        async function renderMovies() {
+            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>Movies</h1><button onclick="navigate(\'/search\')">+ Add Movie</button></div>';
+            const res = await fetch('/api/v1/media?type=movie');
+            const data = await res.json();
+            const movies = data.movies || [];
+
+            let html = '<div class="grid">';
+            movies.forEach(m => {
+                html += `
+                    <div class="card">
+                        <div style="display:flex; justify-content: space-between;">
+                            <strong>${m.Title} (${m.Year})</strong>
+                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="deleteMedia('movie', ${m.ID})">&times;</button>
+                        </div>
+                        <span class="badge status-${m.Status}">${statusText(m.Status)}</span>
+                        ${m.Path ? `<br><small style="word-break: break-all;">${m.Path}</small>` : ''}
+                        <div style="margin-top: 1rem;">
+                            <button class="secondary" onclick="showSubtitles('movie', ${m.ID})">Subtitles</button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            app.innerHTML += html;
+        }
+
+        async function renderTV() {
+            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>TV Shows</h1><button onclick="navigate(\'/search\')">+ Add Show</button></div>';
+            const res = await fetch('/api/v1/media?type=tv');
+            const data = await res.json();
+            const shows = data.tv_shows || [];
+
+            let html = '<div class="grid">';
+            shows.forEach(s => {
+                html += `
+                    <div class="card">
+                        <div style="display:flex; justify-content: space-between;">
+                            <strong>${s.Title} (${s.Year})</strong>
+                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="deleteMedia('tv', ${s.ID})">&times;</button>
+                        </div>
+                        <span class="badge">${s.Monitored ? 'Monitored' : 'Not Monitored'}</span>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            app.innerHTML += html;
+        }
+
+        function statusText(s) {
+            const m = {0:'Missing', 1:'Queued', 2:'Searching', 3:'Downloading', 4:'Available', 5:'Failed'};
+            return m[s] || 'Unknown';
+        }
+
+        async function deleteMedia(type, id) {
+            if (!confirm('Are you sure?')) return;
+            const res = await fetch(`/api/v1/media/${type}/${id}`, { method: 'DELETE' });
+            if (res.ok) handleRoute();
+        }
+
+        // Downloads
+        async function renderDownloads() {
+            app.innerHTML = '<h1>Downloads</h1>';
+            const res = await fetch('/api/v1/downloads');
+            const jobs = await res.json();
+
+            let html = '<table><thead><tr><th>Title</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead><tbody>';
+            if (jobs && jobs.length > 0) {
+                jobs.forEach(j => {
+                    const progress = (j.Progress * 100).toFixed(1);
+                    html += `
+                        <tr>
+                            <td>${j.Title}</td>
+                            <td><span class="badge">${dlStatusText(j.Status)}</span></td>
+                            <td style="width: 200px;">
+                                <div class="progress-bar"><div class="progress-fill" style="width: ${progress}%"></div></div>
+                                <small>${progress}%</small>
+                            </td>
+                            <td>
+                                <button class="danger" onclick="cancelDownload(${j.ID})">Cancel</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            } else {
+                html += '<tr><td colspan="4">No active downloads.</td></tr>';
+            }
+            html += '</tbody></table>';
+            app.innerHTML += html;
+        }
+
+        function dlStatusText(s) {
+            const m = {0:'Queued', 1:'Downloading', 2:'Seeding', 3:'Paused', 4:'Complete', 5:'Failed'};
+            return m[s] || 'Unknown';
+        }
+
+        async function cancelDownload(id) {
+            await fetch(`/api/v1/downloads/${id}`, { method: 'DELETE' });
+            handleRoute();
+        }
+
+        // Search
+        async function renderSearch() {
+            app.innerHTML = `
+                <h1>Search</h1>
+                <div class="card">
+                    <form onsubmit="handleSearch(event)" style="display: flex; gap: 1rem;">
+                        <input type="text" id="search-q" placeholder="Search for movies or TV shows...">
+                        <button type="submit" style="width: 120px;">Search</button>
+                    </form>
+                </div>
+                <div id="search-results" class="grid" style="margin-top: 2rem;"></div>
+            `;
+        }
+
+        window.handleSearch = async (e) => {
+            e.preventDefault();
+            const q = document.getElementById('search-q').value;
+            const resultsDiv = document.getElementById('search-results');
+            resultsDiv.innerHTML = 'Searching indexers...';
+            
+            try {
+                const res = await fetch('/api/v1/search?q=' + encodeURIComponent(q));
+                const results = await res.json();
+                
+                let html = '';
+                results.forEach(r => {
+                    html += `
+                        <div class="card">
+                            <strong>${r.Title}</strong><br>
+                            <small style="color: #6c757d;">${r.Indexer} | ${(r.Size / 1024 / 1024 / 1024).toFixed(2)} GB</small>
+                            <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                                <button onclick="quickAdd('movie', '${r.Title}', '${r.Link}')">Add as Movie</button>
+                                <button class="secondary" onclick="quickAdd('tv', '${r.Title}', '${r.Link}')">Add as TV</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                resultsDiv.innerHTML = html || '<p>No results found.</p>';
+            } catch (err) {
+                resultsDiv.innerHTML = `<p style="color: #dc3545;">Search failed: ${err.message}</p>`;
+            }
+        };
+
+        window.quickAdd = async (type, title, link) => {
+            // 1. Add to library
+            const res = await fetch('/api/v1/media', {
+                method: 'POST',
+                body: JSON.stringify({ type, title, quality: '1080p' })
+            });
+            const data = await res.json();
+            
+            // 2. Trigger download
+            await fetch('/api/v1/downloads', {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: 'magnet',
+                    media_type: type,
+                    media_id: data.id,
+                    title: title,
+                    data: link
+                })
+            });
+            alert('Added to library and started download!');
+        };
+
+        // Subtitles
+        window.showSubtitles = async (type, id) => {
+            showModal('<h3>Subtitles</h3><p>Loading...</p>');
+            const res = await fetch(`/api/v1/media/${type}/${id}/subtitles`);
+            const data = await res.json();
+            
+            let html = `<h3>Subtitles</h3>`;
+            if (data.subtitles && data.subtitles.length > 0) {
+                html += '<ul>' + data.subtitles.map(s => `<li>${s.split('/').pop()}</li>`).join('') + '</ul>';
+            } else {
+                html += '<p>No local subtitles found.</p>';
+            }
+            
+            html += `
+                <div style="margin-top: 1.5rem; border-top: 1px solid #eee; pt: 1rem;">
+                    <h4>Download New</h4>
+                    <form onsubmit="event.preventDefault(); triggerSubDownload('${type}', ${id})">
+                        <select id="sub-lang" style="padding: 0.5rem; width: 100%; margin-bottom: 1rem;">
+                            <option value="eng">English</option>
+                            <option value="spa">Spanish</option>
+                            <option value="fra">French</option>
+                            <option value="ger">German</option>
+                        </select>
+                        <button type="submit" style="width: 100%">Search & Download</button>
+                    </form>
+                </div>
+                <button class="secondary" style="margin-top: 1rem; width: 100%" onclick="closeModal()">Close</button>
+            `;
+            showModal(html);
+        };
+
+        window.triggerSubDownload = async (type, id) => {
+            const lang = document.getElementById('sub-lang').value;
+            await fetch(`/api/v1/media/${type}/${id}/subtitles`, {
+                method: 'POST',
+                body: JSON.stringify({ language: lang })
+            });
+            alert('Subtitle download triggered!');
+            closeModal();
+        };
+
+        // Admin
+        async function renderRSS() {
+            app.innerHTML = '<h1>RSS Feeds</h1><div id="rss-list"></div>';
+            const res = await fetch('/api/v1/rss');
+            const feeds = await res.json();
+            let html = '<table><thead><tr><th>Name</th><th>URL</th><th>Actions</th></tr></thead><tbody>';
+            feeds.forEach(f => {
+                html += `<tr><td>${f.Name}</td><td>${f.URL}</td><td><button class="danger" onclick="deleteRSS(${f.ID})">Remove</button></td></tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('rss-list').innerHTML = html;
+        }
+
+        async function renderSettings() {
+            app.innerHTML = '<h1>Settings</h1>';
+            const res = await fetch('/api/v1/settings');
+            const settings = await res.json();
+            app.innerHTML += `
+                <div class="card">
+                    <h3>Server Info</h3>
+                    <pre>${JSON.stringify(settings.server, null, 2)}</pre>
+                </div>
+                <div class="card">
+                    <h3>Download Config</h3>
+                    <pre>${JSON.stringify(settings.download, null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        // Init
+        checkAuth().then(handleRoute);
+    </script>
+</body>
+</html>
+{{end}}

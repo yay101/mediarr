@@ -1,0 +1,51 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - Mediarr</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nicokant/basecoat@0.2.1/dist/basecoat.min.css">
+    <style>
+        body { display: flex; align-items: center; justify-content: center; height: 100vh; background: #f4f4f4; }
+        .login-card { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        h1 { text-align: center; color: #2196f3; }
+        .btn-oidc { background: #2196f3; color: white; display: block; text-align: center; padding: 1rem; border-radius: 6px; text-decoration: none; font-weight: bold; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Mediarr</h1>
+        <p style="text-align: center;">Please sign in to continue.</p>
+        
+        {{range .Providers}}
+        <a href="/api/v1/auth/provider/{{.ID}}" class="btn-oidc">Sign in with {{.Name}}</a>
+        {{else}}
+        <a href="/api/v1/auth/provider" class="btn-oidc">Sign in with OIDC</a>
+        {{end}}
+
+        <div style="margin-top: 2rem; border-top: 1px solid #eee; padding-top: 1rem;">
+            <form onsubmit="handleLogin(event)">
+                <input type="text" id="user" placeholder="Username" style="margin-bottom: 0.5rem; width: 100%; padding: 0.5rem;">
+                <input type="password" id="pass" placeholder="Password" style="margin-bottom: 1rem; width: 100%; padding: 0.5rem;">
+                <button type="submit" style="width: 100%;">Sign in (Local)</button>
+            </form>
+        </div>
+    </div>
+    <script>
+        async function handleLogin(e) {
+            e.preventDefault();
+            const res = await fetch('/api/v1/auth/login', {
+                method: 'POST',
+                body: JSON.stringify({
+                    username: document.getElementById('user').value,
+                    password: document.getElementById('pass').value
+                })
+            });
+            const data = await res.json();
+            if (data.success) window.location.href = '/';
+            else alert('Login failed');
+        }
+    </script>
+</body>
+</html>
+{{end}}
