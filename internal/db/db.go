@@ -380,7 +380,7 @@ func (d *Database) getSettings() (*embeddb.Table[Setting], error) {
 		return d.settings, nil
 	}
 
-	table, err = embeddb.Use[Setting](core, "settings")
+	table, err = embeddb.Use[Setting](core, "settings", embeddb.UseOptions{MaxVersions: 10})
 	if err != nil {
 		return nil, err
 	}

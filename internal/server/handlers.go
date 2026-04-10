@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/yay101/mediarr/internal/ai"
 	"github.com/yay101/mediarr/internal/automation"
 	"github.com/yay101/mediarr/internal/db"
 	"github.com/yay101/mediarr/internal/indexer"
@@ -1485,6 +1486,39 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"timeout": cfg.MetadataAPI.Timeout.String(),
 	}
 
+	aiCfg := map[string]interface{}{
+		"enabled":  cfg.AI.Enabled,
+		"provider": cfg.AI.Provider,
+		"model":    cfg.AI.Model,
+	}
+	if cfg.AI.Ollama.Host != "" {
+		aiCfg["ollama"] = map[string]interface{}{
+			"host":  cfg.AI.Ollama.Host,
+			"model": cfg.AI.Ollama.Model,
+		}
+	}
+	if cfg.AI.OpenAI.APIKey != "" {
+		aiCfg["openai"] = map[string]interface{}{
+			"model":    cfg.AI.OpenAI.Model,
+			"base_url": cfg.AI.OpenAI.BaseURL,
+		}
+	}
+	if cfg.AI.Anthropic.APIKey != "" {
+		aiCfg["anthropic"] = map[string]interface{}{
+			"model": cfg.AI.Anthropic.Model,
+		}
+	}
+	if cfg.AI.Gemini.APIKey != "" {
+		aiCfg["gemini"] = map[string]interface{}{
+			"model": cfg.AI.Gemini.Model,
+		}
+	}
+	if cfg.AI.DeepSeek.APIKey != "" {
+		aiCfg["deepseek"] = map[string]interface{}{
+			"model": cfg.AI.DeepSeek.Model,
+		}
+	}
+
 	settings := map[string]interface{}{
 		"server": map[string]interface{}{
 			"host": cfg.Server.Host,
@@ -1499,12 +1533,183 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"tls":          tlsCfg,
 		"auth":         authCfg,
 		"metadata_api": metadataAPI,
+		"ai":           aiCfg,
 	}
 	writeJSON(w, settings)
 }
 
-func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
+	database := s.app.DB()
+	if database == nil {
+		http.Error(w, "database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	settingsTable, err := database.Settings()
+	if err != nil {
+		http.Error(w, "failed to get settings table", http.StatusInternalServerError)
+		return
+	}
+
+	var updates map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	for key, value := range updates {
+		existing, err := settingsTable.Get(key)
+		if err != nil {
+			setting := &db.Setting{
+				Key:       key,
+				Value:     value,
+				UpdatedAt: time.Now(),
+			}
+			_, err = settingsTable.Insert(setting)
+			if err != nil {
+				slog.Error("failed to insert setting", "key", key, "error", err)
+				continue
+			}
+		} else {
+			existing.Value = value
+			existing.UpdatedAt = time.Now()
+			if err := settingsTable.Update(key, existing); err != nil {
+				slog.Error("failed to update setting", "key", key, "error", err)
+				continue
+			}
+		}
+	}
+
 	writeJSON(w, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleGetSettingVersions(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	database := s.app.DB()
+	if database == nil {
+		http.Error(w, "database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	settingsTable, err := database.Settings()
+	if err != nil {
+		http.Error(w, "failed to get settings table", http.StatusInternalServerError)
+		return
+	}
+
+	versions, err := settingsTable.ListVersions(key)
+	if err != nil {
+		http.Error(w, "versioning not enabled for settings", http.StatusNotFound)
+		return
+	}
+
+	result := make([]map[string]interface{}, 0, len(versions))
+	for _, v := range versions {
+		result = append(result, map[string]interface{}{
+			"version":    v.Version,
+			"created_at": v.CreatedAt,
+		})
+	}
+
+	writeJSON(w, map[string]interface{}{"key": key, "versions": result})
+}
+
+func (s *Server) handleGetSettingVersion(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	versionStr := r.PathValue("version")
+	if key == "" || versionStr == "" {
+		http.Error(w, "key and version are required", http.StatusBadRequest)
+		return
+	}
+
+	version, err := strconv.ParseUint(versionStr, 10, 32)
+	if err != nil {
+		http.Error(w, "invalid version number", http.StatusBadRequest)
+		return
+	}
+
+	database := s.app.DB()
+	if database == nil {
+		http.Error(w, "database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	settingsTable, err := database.Settings()
+	if err != nil {
+		http.Error(w, "failed to get settings table", http.StatusInternalServerError)
+		return
+	}
+
+	setting, err := settingsTable.GetVersion(key, uint32(version))
+	if err != nil {
+		http.Error(w, "version not found", http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"key":        setting.Key,
+		"value":      setting.Value,
+		"version":    version,
+		"updated_at": setting.UpdatedAt,
+	})
+}
+
+func (s *Server) handleRollbackSetting(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	versionStr := r.PathValue("version")
+	if key == "" || versionStr == "" {
+		http.Error(w, "key and version are required", http.StatusBadRequest)
+		return
+	}
+
+	version, err := strconv.ParseUint(versionStr, 10, 32)
+	if err != nil {
+		http.Error(w, "invalid version number", http.StatusBadRequest)
+		return
+	}
+
+	database := s.app.DB()
+	if database == nil {
+		http.Error(w, "database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	settingsTable, err := database.Settings()
+	if err != nil {
+		http.Error(w, "failed to get settings table", http.StatusInternalServerError)
+		return
+	}
+
+	oldVersion, err := settingsTable.GetVersion(key, uint32(version))
+	if err != nil {
+		http.Error(w, "version not found", http.StatusNotFound)
+		return
+	}
+
+	current, err := settingsTable.Get(key)
+	if err != nil {
+		http.Error(w, "current setting not found", http.StatusNotFound)
+		return
+	}
+
+	current.Value = oldVersion.Value
+	current.UpdatedAt = time.Now()
+	if err := settingsTable.Update(key, current); err != nil {
+		http.Error(w, "failed to rollback setting", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"status":  "rolled back",
+		"key":     key,
+		"version": version,
+		"value":   current.Value,
+	})
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -1899,4 +2104,186 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func (s *Server) handleAIRefineSearch(w http.ResponseWriter, r *http.Request) {
+	aiSvc := s.app.AI()
+	if aiSvc == nil || !aiSvc.IsEnabled() {
+		writeJSON(w, map[string]interface{}{"error": "AI not enabled", "enabled": false})
+		return
+	}
+
+	var req struct {
+		Results   []ai.SearchResult `json:"results"`
+		Query     string            `json:"query"`
+		MediaType string            `json:"media_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := aiSvc.SearchRefine(r.Context(), ai.SearchRefineInput{
+		Results:   req.Results,
+		Query:     req.Query,
+		MediaType: req.MediaType,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, result)
+}
+
+func (s *Server) handleAIFileCheck(w http.ResponseWriter, r *http.Request) {
+	aiSvc := s.app.AI()
+	if aiSvc == nil || !aiSvc.IsEnabled() {
+		writeJSON(w, map[string]interface{}{"error": "AI not enabled", "enabled": false})
+		return
+	}
+
+	var req struct {
+		FilePath    string `json:"file_path"`
+		MediaTitle  string `json:"media_title"`
+		MediaType   string `json:"media_type"`
+		Quality     string `json:"quality"`
+		ReleaseName string `json:"release_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := aiSvc.FileCheck(r.Context(), ai.FileCheckInput{
+		FilePath:    req.FilePath,
+		MediaTitle:  req.MediaTitle,
+		MediaType:   req.MediaType,
+		Quality:     req.Quality,
+		ReleaseName: req.ReleaseName,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, result)
+}
+
+func (s *Server) handleAIMetadataEnrich(w http.ResponseWriter, r *http.Request) {
+	aiSvc := s.app.AI()
+	if aiSvc == nil || !aiSvc.IsEnabled() {
+		writeJSON(w, map[string]interface{}{"error": "AI not enabled", "enabled": false})
+		return
+	}
+
+	var req struct {
+		TMDBID    uint32 `json:"tmdb_id"`
+		MediaType string `json:"media_type"`
+		Title     string `json:"title"`
+		Year      uint16 `json:"year"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := aiSvc.MetadataEnrich(r.Context(), ai.MetadataEnrichInput{
+		TMDBID:    req.TMDBID,
+		MediaType: req.MediaType,
+		Title:     req.Title,
+		Year:      req.Year,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, result)
+}
+
+func (s *Server) handleAINaturalSearch(w http.ResponseWriter, r *http.Request) {
+	aiSvc := s.app.AI()
+	if aiSvc == nil || !aiSvc.IsEnabled() {
+		writeJSON(w, map[string]interface{}{"error": "AI not enabled", "enabled": false})
+		return
+	}
+
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := aiSvc.NaturalSearch(r.Context(), ai.NaturalSearchInput{
+		Query: req.Query,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, result)
+}
+
+func (s *Server) handleAIAlbumVerify(w http.ResponseWriter, r *http.Request) {
+	aiSvc := s.app.AI()
+	if aiSvc == nil || !aiSvc.IsEnabled() {
+		writeJSON(w, map[string]interface{}{"error": "AI not enabled", "enabled": false})
+		return
+	}
+
+	var req struct {
+		Album     string   `json:"album"`
+		Artist    string   `json:"artist"`
+		Year      uint16   `json:"year"`
+		Tracklist []string `json:"tracklist"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := aiSvc.AlbumVerify(r.Context(), ai.AlbumVerifyInput{
+		Album:     req.Album,
+		Artist:    req.Artist,
+		Year:      req.Year,
+		Tracklist: req.Tracklist,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, result)
+}
+
+func (s *Server) handleAIDidYouMean(w http.ResponseWriter, r *http.Request) {
+	aiSvc := s.app.AI()
+	if aiSvc == nil || !aiSvc.IsEnabled() {
+		writeJSON(w, map[string]interface{}{"error": "AI not enabled", "enabled": false})
+		return
+	}
+
+	var req struct {
+		Query string `json:"query"`
+		Type  string `json:"type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := aiSvc.DidYouMean(r.Context(), ai.DidYouMeanInput{
+		Query: req.Query,
+		Type:  req.Type,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, result)
 }

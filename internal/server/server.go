@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
+	"github.com/yay101/mediarr/internal/ai"
 	"github.com/yay101/mediarr/internal/auth"
 	"github.com/yay101/mediarr/internal/config"
 	"github.com/yay101/mediarr/internal/db"
@@ -37,6 +38,7 @@ type App struct {
 	SearchHub  func() *search.Hub
 	Download   func() *download.Manager
 	Storage    func() interface{}
+	AI         func() *ai.Service
 	Stopped    func() <-chan struct{}
 }
 
@@ -113,13 +115,13 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/media/{type}/{id}/subtitles", s.authMiddleware(s.handleDownloadSubtitles))
 	s.mux.HandleFunc("GET /api/v1/calendar", s.authMiddleware(s.handleGetCalendar))
 
-	s.mux.HandleFunc("GET /api/v1/search", s.authMiddleware(s.handleSearch))
-	s.mux.HandleFunc("POST /api/v1/search/{type}/{id}", s.authMiddleware(s.handleTriggerSearch))
+	s.mux.HandleFunc("GET /api/v1/search/metadata", s.authMiddleware(s.handleSearch))
+	s.mux.HandleFunc("POST /api/v1/media/{type}/{id}/search", s.authMiddleware(s.handleTriggerSearch))
 
-	s.mux.HandleFunc("POST /api/v1/search/manual", s.authMiddleware(s.handleManualSearch))
-	s.mux.HandleFunc("GET /api/v1/search/manual/{session_id}", s.authMiddleware(s.handleGetSearchResults))
-	s.mux.HandleFunc("POST /api/v1/search/manual/{session_id}/download", s.authMiddleware(s.handleDownloadSearchResult))
-	s.mux.HandleFunc("DELETE /api/v1/search/manual/{session_id}", s.authMiddleware(s.handleClearSearchSession))
+	s.mux.HandleFunc("POST /api/v1/search", s.authMiddleware(s.handleManualSearch))
+	s.mux.HandleFunc("GET /api/v1/search/{session_id}", s.authMiddleware(s.handleGetSearchResults))
+	s.mux.HandleFunc("POST /api/v1/search/{session_id}/download", s.authMiddleware(s.handleDownloadSearchResult))
+	s.mux.HandleFunc("DELETE /api/v1/search/{session_id}", s.authMiddleware(s.handleClearSearchSession))
 
 	s.mux.HandleFunc("GET /ws/search", s.authMiddleware(s.handleSearchWebSocket))
 	s.mux.HandleFunc("GET /ws", s.authMiddleware(s.handleWS))
@@ -135,19 +137,30 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/downloads", s.authMiddleware(s.handleListDownloads))
 	s.mux.HandleFunc("POST /api/v1/downloads", s.authMiddleware(s.handleAddDownload))
 	s.mux.HandleFunc("DELETE /api/v1/downloads/{id}", s.authMiddleware(s.handleCancelDownload))
-	s.mux.HandleFunc("POST /api/v1/downloads/{id}/pause", s.authMiddleware(s.handlePauseDownload))
-	s.mux.HandleFunc("POST /api/v1/downloads/{id}/resume", s.authMiddleware(s.handleResumeDownload))
+	s.mux.HandleFunc("PATCH /api/v1/downloads/{id}/pause", s.authMiddleware(s.handlePauseDownload))
+	s.mux.HandleFunc("PATCH /api/v1/downloads/{id}/resume", s.authMiddleware(s.handleResumeDownload))
 
 	s.mux.HandleFunc("GET /api/v1/files/stream/{id}", s.authMiddleware(s.handleStreamFile))
 	s.mux.HandleFunc("GET /api/v1/files/", s.adminMiddleware(s.handleServeFile))
 
 	s.mux.HandleFunc("GET /api/v1/settings", s.adminMiddleware(s.handleGetSettings))
-	s.mux.HandleFunc("PUT /api/v1/settings", s.adminMiddleware(s.handlePutSettings))
+	s.mux.HandleFunc("PATCH /api/v1/settings", s.adminMiddleware(s.handlePatchSettings))
+	s.mux.HandleFunc("GET /api/v1/settings/{key}/versions", s.adminMiddleware(s.handleGetSettingVersions))
+	s.mux.HandleFunc("GET /api/v1/settings/{key}/versions/{version}", s.adminMiddleware(s.handleGetSettingVersion))
+	s.mux.HandleFunc("POST /api/v1/settings/{key}/rollback/{version}", s.adminMiddleware(s.handleRollbackSetting))
 
 	s.mux.HandleFunc("GET /api/v1/tasks", s.adminMiddleware(s.handleListTasks))
 	s.mux.HandleFunc("DELETE /api/v1/tasks/{id}", s.adminMiddleware(s.handleKillTask))
-	s.mux.HandleFunc("POST /api/v1/reload", s.adminMiddleware(s.handleReloadConfig))
+	s.mux.HandleFunc("POST /api/v1/config/reload", s.adminMiddleware(s.handleReloadConfig))
 	s.mux.HandleFunc("POST /api/v1/media/verify", s.adminMiddleware(s.handleVerifyMedia))
+
+	// AI endpoints
+	s.mux.HandleFunc("POST /api/v1/ai/search/refine", s.adminMiddleware(s.handleAIRefineSearch))
+	s.mux.HandleFunc("POST /api/v1/ai/file/check", s.adminMiddleware(s.handleAIFileCheck))
+	s.mux.HandleFunc("POST /api/v1/ai/metadata/enrich", s.adminMiddleware(s.handleAIMetadataEnrich))
+	s.mux.HandleFunc("POST /api/v1/ai/search/natural", s.adminMiddleware(s.handleAINaturalSearch))
+	s.mux.HandleFunc("POST /api/v1/ai/album/verify", s.adminMiddleware(s.handleAIAlbumVerify))
+	s.mux.HandleFunc("POST /api/v1/ai/didyoumean", s.adminMiddleware(s.handleAIDidYouMean))
 
 	// Frontend routes (SPA)
 	frontendRoutes := []string{
