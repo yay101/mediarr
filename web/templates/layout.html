@@ -1,1297 +1,154 @@
 {{define "layout"}}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" x-data="app()">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mediarr</title>
+    <title>{{template "title" .}} - Mediarr</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.11/dist/basecoat.cdn.min.css">
+    
+    <!-- Basecoat UI CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@hunvreus/basecoat@0.3.11/dist/basecoat.min.css">
+    
+    <!-- Alpine.js -->
+    <script src="https://unpkg.com/alpinejs@3.14.8/cdn.min.js" defer></script>
+    
+    <!-- Mediarr App JS -->
+    <script src="/static/js/app.js"></script>
+    
     <style>
-        :root {
-            --sidebar-width: 240px;
-            --primary-color: #2196f3;
-        }
-        body {
-            display: flex;
-            min-height: 100vh;
-            margin: 0;
-            font-family: system-ui, -apple-system, sans-serif;
-        }
-        aside {
-            width: var(--sidebar-width);
-            background: #f8f9fa;
-            border-right: 1px solid #dee2e6;
-            padding: 1.5rem;
-            position: fixed;
-            height: 100vh;
-            box-sizing: border-box;
-        }
-        main {
-            margin-left: var(--sidebar-width);
-            flex: 1;
-            padding: 2rem;
-            max-width: 1200px;
-        }
-        h2 { margin-top: 0; color: var(--primary-color); }
-        nav ul { list-style: none; padding: 0; margin: 2rem 0; }
-        nav li { margin-bottom: 0.5rem; }
-        nav a {
-            text-decoration: none;
-            color: #495057;
-            display: block;
-            padding: 0.75rem 1rem;
-            border-radius: 6px;
-            transition: background 0.2s;
-        }
-        nav a:hover, nav a.active {
-            background: #e9ecef;
-            color: var(--primary-color);
-            font-weight: 600;
-        }
-        .card {
-            background: #fff;
-            border: 1px solid #dee2e6;
-            border-radius: 10px;
-            padding: 1.25rem;
-            margin-bottom: 1rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .settings-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .settings-table td {
-            padding: 0.5rem;
-            border-bottom: 1px solid #eee;
-        }
-        .settings-table td:first-child {
-            font-weight: 600;
-            width: 40%;
-            color: #555;
-        }
-        .settings-table .location-header {
-            background: #f8f9fa;
-            font-weight: 700;
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1.5rem;
-        }
-        .clickable { cursor: pointer; transition: transform 0.1s; }
-        .clickable:hover { transform: translateY(-2px); border-color: var(--primary-color); }
-        .badge {
-            display: inline-block;
-            padding: 0.25rem 0.6rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            background: #e9ecef;
-            color: #495057;
-        }
-        .status-4 { background: #d1e7dd; color: #0f5132; } /* Available */
-        .status-1 { background: #fff3cd; color: #664d03; } /* Queued */
-        .status-2 { background: #cff4fc; color: #055160; } /* Searching */
-        .status-3 { background: #cfe2ff; color: #084298; } /* Downloading */
-        
-        button.primary {
-            background: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        button.primary:hover {
-            opacity: 0.9;
-        }
-        button.secondary {
-            background: #e9ecef;
-            color: #495057;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        button.secondary:hover {
-            background: #dee2e6;
-        }
-        button.danger {
-            background: #dc3545;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        button.danger:hover {
-            background: #bb2d3b;
-        }
-        
-        .progress-bar {
-            height: 8px;
-            background: #e9ecef;
-            border-radius: 4px;
-            overflow: hidden;
-            margin: 0.5rem 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background: var(--primary-color);
-            transition: width 0.3s;
-        }
-        
-        .modal {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-        .modal-content {
-            background: white;
-            padding: 2rem;
-            border-radius: 12px;
-            max-width: 500px;
-            width: 90%;
-        }
+        [x-cloak] { display: none !important; }
+        .toast { max-width: 400px; }
     </style>
 </head>
-<body>
-    <aside>
-        <h2>Mediarr</h2>
-        <nav>
-            <ul>
-                <li><a href="/" data-link>Dashboard</a></li>
-                <li><a href="/movies" data-link>Movies</a></li>
-                <li><a href="/tv" data-link>TV Shows</a></li>
-                <li><a href="/music" data-link>Music</a></li>
-                <li><a href="/books" data-link>Books</a></li>
-                <li><a href="/manga" data-link>Manga</a></li>
-                <li><a href="/downloads" data-link>Downloads</a></li>
-                <li><a href="/search" data-link>Search</a></li>
-                <li><a href="/rss" data-link title="Admin only">RSS Feeds</a></li>
-                <li><a href="/settings" data-link title="Admin only">Settings</a></li>
-            </ul>
-        </nav>
-        <div style="position: absolute; bottom: 1.5rem; left: 1.5rem; right: 1.5rem;">
-            <div id="user-info" style="font-size: 0.9rem; margin-bottom: 0.5rem; color: #6c757d;">Loading...</div>
-            <button class="secondary" style="width: 100%" onclick="logout(event)">Logout</button>
-        </div>
-    </aside>
-
-    <main>
-        <div id="content">Loading...</div>
-    </main>
-
-    <div id="modal" class="modal" onclick="closeModal(event)">
-        <div class="modal-content" onclick="event.stopPropagation()">
-            <div id="modal-body"></div>
-        </div>
+<body class="h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    
+    <!-- Toast Notifications -->
+    <div class="fixed top-4 right-4 z-50 flex flex-col gap-2" 
+         x-data 
+         x-show="$store.notifications.items.length > 0"
+         x-cloak>
+        <template x-for="notification in $store.notifications.items" :key="notification.id">
+            <div class="card shadow-lg border-l-4"
+                 :class="{
+                     'border-green-500 bg-green-50 dark:bg-green-900': notification.level === 'success',
+                     'border-red-500 bg-red-50 dark:bg-red-900': notification.level === 'error',
+                     'border-yellow-500 bg-yellow-50 dark:bg-yellow-900': notification.level === 'warning',
+                     'border-blue-500 bg-blue-50 dark:bg-blue-900': notification.level === 'info'
+                 }">
+                <div class="flex items-center justify-between gap-3 p-3">
+                    <span x-text="notification.message"></span>
+                    <button @click="$store.notifications.remove(notification.id)" 
+                            class="text-current opacity-70 hover:opacity-100">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </template>
     </div>
 
-    <script>
-        const app = document.getElementById('content');
-        const modal = document.getElementById('modal');
+    <!-- Main Layout -->
+    <div class="flex h-screen">
         
-        const routes = {
-            '/': renderDashboard,
-            '/movies': renderMovies,
-            '/tv': renderTV,
-            '/music': renderMusic,
-            '/books': renderBooks,
-            '/manga': renderManga,
-            '/downloads': renderDownloads,
-            '/search': renderSearch,
-            '/rss': renderRSS,
-            '/settings': renderSettings
-        };
-
-        function navigate(path) {
-            window.history.pushState({}, path, window.location.origin + path);
-            handleRoute();
-        }
-
-        async function handleRoute() {
-            const path = window.location.pathname;
-            currentPath = path;
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col shrink-0">
             
-            // Handle dynamic routes
-            const tvMatch = path.match(/^\/tv\/(\d+)$/);
-            if (tvMatch) {
-                app.innerHTML = '<div class="loader">Loading...</div>';
-                await renderTVShowDetail(tvMatch[1]);
-                return;
-            }
+            <!-- Logo -->
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                <a href="/" class="flex items-center gap-2">
+                    <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/>
+                    </svg>
+                    <span class="text-xl font-bold">Mediarr</span>
+                </a>
+            </div>
             
-            const movieMatch = path.match(/^\/movie\/(\d+)$/);
-            if (movieMatch) {
-                app.innerHTML = '<div class="loader">Loading...</div>';
-                await renderMovieDetail(movieMatch[1]);
-                return;
-            }
-
-            const renderer = routes[path] || renderNotFound;
-            
-            document.querySelectorAll('[data-link]').forEach(link => {
-                link.classList.toggle('active', link.getAttribute('href') === path);
-            });
-
-            app.innerHTML = '<div class="loader">Loading...</div>';
-            try {
-                await renderer();
-            } catch (err) {
-                app.innerHTML = `<div class="card" style="border-color: #dc3545;">
-                    <h3 style="color: #dc3545;">Error</h3>
-                    <p>${err.message}</p>
-                    <button onclick="handleRoute()">Retry</button>
-                </div>`;
-            }
-        }
-
-        window.onpopstate = handleRoute;
-        document.addEventListener('click', e => {
-            const link = e.target.closest('[data-link]');
-            if (link) {
-                e.preventDefault();
-                navigate(link.getAttribute('href'));
-            }
-        });
-
-        function showModal(html) {
-            document.getElementById('modal-body').innerHTML = html;
-            modal.style.display = 'flex';
-        }
-        function closeModal() { modal.style.display = 'none'; }
-
-        // Auth
-        let currentUser = null;
-        let ws = null;
-        let currentPath = '/';
-        
-        function initWS() {
-            const wsUrl = `wss://${window.location.host}/ws`;
-            ws = new WebSocket(wsUrl);
-            
-            ws.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    handleWSMessage(msg);
-                } catch(e) {
-                    console.error('WS message parse error', e);
-                }
-            };
-            
-            ws.onclose = () => {
-                setTimeout(initWS, 5000);
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WS error', error);
-            };
-        }
-        
-        function handleWSMessage(msg) {
-            // Store latest update for each path
-            window.wsUpdateData = window.wsUpdateData || {};
-            window.wsUpdateData[msg.path] = msg.data;
-            
-            // Notify current render function if it cares
-            if (typeof onWSUpdate === 'function') {
-                onWSUpdate(msg.path, msg.data);
-            }
-            
-            // If refresh, always reload current page
-            if (msg.type === 'refresh') {
-                handleRoute();
-                return;
-            }
-            
-            // For updates: check if current page should refresh
-            const currentBase = getBasePath(currentPath);
-            const updateBase = getBasePath(msg.path);
-            
-            // Refresh if paths match at the base level (e.g., /movies matches /movies)
-            // or if it's a specific item update for current page
-            if (msg.path === currentPath || msg.path === currentBase) {
-                handleRoute();
-            }
-        }
-        
-        // Get base path (e.g., /movies from /movies/123)
-        function getBasePath(path) {
-            const parts = path.split('/');
-            return '/' + (parts[1] || '');
-        }
-        
-        // Check if a specific ID is in the latest update
-        window.isInWSUpdate = function(path, id) {
-            const data = window.wsUpdateData && window.wsUpdateData[path];
-            if (!data || !data.items) return false;
-            return data.items.some(item => item.id === id);
-        };
-         
-        async function checkAuth() {
-            try {
-                const res = await fetch('/api/v1/auth/me');
-                const data = await res.json();
-                if (!data.authenticated) {
-                    window.location.href = '/login';
-                    return;
-                }
-                currentUser = data.user;
-                document.getElementById('user-info').innerHTML = `
-                    <div>${data.user.username} (${data.user.role})</div>
-                    <div style="font-size: 0.7rem; cursor: pointer;" title="Click to copy API Key" onclick="copyApiKey('${data.user.api_key}')">API Key: ${data.user.api_key.slice(0, 8)}...</div>
-                `;
+            <!-- Navigation -->
+            <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+                <a href="/" class="nav-item" :class="{ 'active': window.location.pathname === '/' }">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                    </svg>
+                    Dashboard
+                </a>
                 
-                // Init WebSocket after auth
-                initWS();
+                <a href="/movies" class="nav-item" :class="{ 'active': window.location.pathname === '/movies' }">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/>
+                    </svg>
+                    Movies
+                </a>
                 
-                // Hide admin links if not admin
-                if (data.user.role !== 'admin') {
-                    document.querySelectorAll('a[href="/rss"], a[href="/settings"]').forEach(el => el.parentElement.style.display = 'none');
-                }
-            } catch (e) {
-                console.error("Auth check failed", e);
-            }
-        }
-
-        window.copyApiKey = (key) => {
-            navigator.clipboard.writeText(key);
-            alert('API Key copied to clipboard!');
-        };
-
-        async function logout(e) {
-            e.preventDefault();
-            await fetch('/api/v1/auth/logout', { method: 'POST' });
-            window.location.reload();
-        }
-
-        // Dashboard
-        async function renderDashboard() {
-            app.innerHTML = '<h1>Dashboard</h1>';
-            const res = await fetch('/api/v1/calendar');
-            const eps = await res.json();
-            
-            let html = '<h3>Airing Soon</h3><div class="grid">';
-            if (eps && eps.length > 0) {
-                eps.forEach(ep => {
-                    html += `
-                        <div class="card">
-                            <strong>${ep.Title || 'Unknown Episode'}</strong><br>
-                            <span class="badge">S${String(ep.Season).padStart(2, '0')}E${String(ep.Episode).padStart(2, '0')}</span><br>
-                            <small>${new Date(ep.AirDate).toLocaleDateString()}</small>
-                        </div>
-                    `;
-                });
-            } else {
-                html += '<p>No upcoming episodes in the next 30 days.</p>';
-            }
-            html += '</div>';
-            app.innerHTML += html;
-        }
-
-        // Media
-        async function renderMovies() {
-            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>Movies</h1><button onclick="navigate(\'/search\')">+ Add Movie</button></div>';
-            const res = await fetch('/api/v1/media?type=movie');
-            const data = await res.json();
-            const movies = data.movies || [];
-
-            let html = '<div class="grid">';
-            movies.forEach(m => {
-                html += `
-                    <div class="card clickable" onclick="navigate('/movie/${m.ID}')">
-                        <div style="display:flex; justify-content: space-between;">
-                            <strong>${m.Title} (${m.Year})</strong>
-                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="event.stopPropagation(); deleteMedia('movie', ${m.ID})">&times;</button>
-                        </div>
-                        <span class="badge status-${m.Status}">${statusText(m.Status)}</span>
-                        ${m.Path ? `<br><small style="word-break: break-all;">${m.Path}</small>` : ''}
-                    </div>
-                `;
-            });
-            html += '</div>';
-            app.innerHTML += html;
-        }
-
-        async function renderTV() {
-            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>TV Shows</h1><button onclick="navigate(\'/search\')">+ Add Show</button></div>';
-            const res = await fetch('/api/v1/media?type=tv');
-            const data = await res.json();
-            const shows = data.tv_shows || [];
-
-            let html = '<div class="grid">';
-            shows.forEach(s => {
-                html += `
-                    <div class="card clickable" onclick="navigate('/tv/${s.ID}')">
-                        <div style="display:flex; justify-content: space-between;">
-                            <strong>${s.Title} (${s.Year})</strong>
-                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="event.stopPropagation(); deleteMedia('tv', ${s.ID})">&times;</button>
-                        </div>
-                        <span class="badge">${s.Monitored ? 'Monitored' : 'Not Monitored'}</span>
-                    </div>
-                `;
-            });
-            html += '</div>';
-            app.innerHTML += html;
-        }
-
-        async function renderMusic() {
-            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>Music</h1><button onclick="navigate(\'/search\')">+ Add Music</button></div>';
-            const res = await fetch('/api/v1/media?type=music');
-            const data = await res.json();
-            const music = data.music || [];
-
-            let html = '<div class="grid">';
-            music.forEach(m => {
-                html += `
-                    <div class="card">
-                        <div style="display:flex; justify-content: space-between;">
-                            <strong>${m.Title}</strong>
-                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="deleteMedia('music', ${m.ID})">&times;</button>
-                        </div>
-                        <small>${m.Artist} (${m.Year})</small><br>
-                        <span class="badge status-${m.Status}">${statusText(m.Status)}</span>
-                    </div>
-                `;
-            });
-            html += '</div>';
-            app.innerHTML += html;
-        }
-
-        async function renderBooks() {
-            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>Books</h1><button onclick="navigate(\'/search\')">+ Add Book</button></div>';
-            const res = await fetch('/api/v1/media?type=book');
-            const data = await res.json();
-            const books = data.books || [];
-
-            let html = '<div class="grid">';
-            books.forEach(b => {
-                html += `
-                    <div class="card">
-                        <div style="display:flex; justify-content: space-between;">
-                            <strong>${b.Title}</strong>
-                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="deleteMedia('book', ${b.ID})">&times;</button>
-                        </div>
-                        <small>${b.Author} (${b.Year})</small><br>
-                        <span class="badge status-${b.Status}">${statusText(b.Status)}</span>
-                    </div>
-                `;
-            });
-            html += '</div>';
-            app.innerHTML += html;
-        }
-
-        async function renderManga() {
-            app.innerHTML = '<div style="display:flex; justify-content: space-between; align-items: center;"><h1>Manga</h1><button onclick="navigate(\'/search\')">+ Add Manga</button></div>';
-            const res = await fetch('/api/v1/media?type=manga');
-            const data = await res.json();
-            const manga = data.manga || [];
-
-            let html = '<div class="grid">';
-            manga.forEach(m => {
-                html += `
-                    <div class="card">
-                        <div style="display:flex; justify-content: space-between;">
-                            <strong>${m.Title} (${m.Year})</strong>
-                            <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="deleteMedia('manga', ${m.ID})">&times;</button>
-                        </div>
-                        <span class="badge status-${m.Status}">${statusText(m.Status)}</span>
-                    </div>
-                `;
-            });
-            html += '</div>';
-            app.innerHTML += html;
-        }
-
-        async function renderTVShowDetail(id) {
-            const res = await fetch(`/api/v1/media/tv/${id}`);
-            const data = await res.json();
-            const show = data.show;
-            const episodes = data.episodes || [];
-
-            app.innerHTML = `
-                <div style="margin-bottom: 2rem;">
-                    <a href="/tv" data-link>&larr; Back to TV Shows</a>
-                    <h1 style="margin-top: 1rem;">${show.Title} (${show.Year})</h1>
-                    <span class="badge">${show.Monitored ? 'Monitored' : 'Not Monitored'}</span>
+                <a href="/tv" class="nav-item" :class="{ 'active': window.location.pathname === '/tv' }">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                    TV Shows
+                </a>
+                
+                <a href="/downloads" class="nav-item" :class="{ 'active': window.location.pathname === '/downloads' }">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    Downloads
+                </a>
+                
+                <a href="/search" class="nav-item" :class="{ 'active': window.location.pathname === '/search' }">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                    Search
+                </a>
+                
+                <a href="/rss" class="nav-item" :class="{ 'active': window.location.pathname === '/rss' }">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7M6 17a1 1 0 110-2 1 1 0 010 2z"/>
+                    </svg>
+                    RSS Feeds
+                </a>
+                
+                <div class="pt-4 mt-4 border-t border-gray-200 dark:border-gray-700">
+                    <a href="/settings" class="nav-item" :class="{ 'active': window.location.pathname === '/settings' }">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                        Settings
+                    </a>
                 </div>
-                
-                <h3>Seasons & Episodes</h3>
-                <div id="episodes-list"></div>
-            `;
-
-            const seasons = {};
-            episodes.forEach(ep => {
-                if (!seasons[ep.Season]) seasons[ep.Season] = [];
-                seasons[ep.Season].push(ep);
-            });
-
-            let html = '';
-            Object.keys(seasons).sort((a,b) => a-b).forEach(sNum => {
-                html += `<div class="card"><h4>Season ${sNum}</h4><table><thead><tr><th>Ep</th><th>Title</th><th>Status</th><th>Path</th></tr></thead><tbody>`;
-                seasons[sNum].sort((a,b) => a.Episode - b.Episode).forEach(ep => {
-                    html += `
-                        <tr>
-                            <td>${ep.Episode}</td>
-                            <td>${ep.Title || 'Episode ' + ep.Episode}</td>
-                            <td><span class="badge status-${ep.Status}">${statusText(ep.Status)}</span></td>
-                            <td style="font-size: 0.8rem; color: #6c757d;">${ep.Path || '-'}</td>
-                        </tr>
-                    `;
-                });
-                html += '</tbody></table></div>';
-            });
+            </nav>
             
-            if (Object.keys(seasons).length === 0) {
-                html = '<p>No episodes found for this show.</p>';
-            }
-            document.getElementById('episodes-list').innerHTML = html;
-        }
-
-        async function renderMovieDetail(id) {
-            const res = await fetch(`/api/v1/media/movie/${id}`);
-            const movie = await res.json();
-
-            app.innerHTML = `
-                <div style="margin-bottom: 2rem;">
-                    <a href="/movies" data-link>&larr; Back to Movies</a>
-                    <h1 style="margin-top: 1rem;">${movie.Title} (${movie.Year})</h1>
-                </div>
-                
-                <div class="card">
-                    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
-                        ${movie.Metadata && movie.Metadata.poster ? `<img src="${movie.Metadata.poster.url}" style="width: 200px; border-radius: 8px;">` : ''}
-                        <div style="flex: 1; min-width: 300px;">
-                            <span class="badge status-${movie.Status}">${statusText(movie.Status)}</span>
-                            <p style="margin: 1rem 0;">${(movie.Metadata && movie.Metadata.overview) || 'No overview available.'}</p>
-                            <p><strong>Path:</strong> ${movie.Path || 'Not available'}</p>
-                            <p><strong>Quality:</strong> ${movie.Quality || 'Default'}</p>
-                            <button class="secondary" onclick="showSubtitles('movie', ${movie.ID})">Manage Subtitles</button>
-                        </div>
+            <!-- User Menu -->
+            <div class="p-4 border-t border-gray-200 dark:border-gray-700">
+                <div x-show="$store.user.authenticated" class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center shrink-0">
+                        <span class="text-sm font-medium text-indigo-600 dark:text-indigo-200" x-text="$store.user.username.charAt(0).toUpperCase()"></span>
                     </div>
-                </div>
-            `;
-        }
-
-        function renderNotFound() {
-            app.innerHTML = '<h1>404 Not Found</h1><p>The page you are looking for does not exist.</p><a href="/" data-link>Back to Dashboard</a>';
-        }
-
-        function statusText(s) {
-            const m = {0:'Missing', 1:'Queued', 2:'Searching', 3:'Downloading', 4:'Available', 5:'Failed'};
-            return m[s] || 'Unknown';
-        }
-
-        async function deleteMedia(type, id) {
-            if (!confirm('Are you sure?')) return;
-            const res = await fetch(`/api/v1/media/${type}/${id}`, { method: 'DELETE' });
-            if (res.ok) handleRoute();
-        }
-
-        // Downloads
-        async function renderDownloads() {
-            app.innerHTML = '<h1>Downloads</h1>';
-            const res = await fetch('/api/v1/downloads');
-            const jobs = await res.json();
-
-            let html = '<table><thead><tr><th>Title</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead><tbody>';
-            if (jobs && jobs.length > 0) {
-                jobs.forEach(j => {
-                    const progress = (j.Progress * 100).toFixed(1);
-                    html += `
-                        <tr>
-                            <td>${j.Title}</td>
-                            <td><span class="badge">${dlStatusText(j.Status)}</span></td>
-                            <td style="width: 200px;">
-                                <div class="progress-bar"><div class="progress-fill" style="width: ${progress}%"></div></div>
-                                <small>${progress}%</small>
-                            </td>
-                            <td>
-                                <button class="danger" onclick="cancelDownload(${j.ID})">Cancel</button>
-                            </td>
-                        </tr>
-                    `;
-                });
-            } else {
-                html += '<tr><td colspan="4">No active downloads.</td></tr>';
-            }
-            html += '</tbody></table>';
-            app.innerHTML += html;
-        }
-
-        function dlStatusText(s) {
-            const m = {0:'Queued', 1:'Downloading', 2:'Seeding', 3:'Paused', 4:'Complete', 5:'Failed'};
-            return m[s] || 'Unknown';
-        }
-
-        async function cancelDownload(id) {
-            await fetch(`/api/v1/downloads/${id}`, { method: 'DELETE' });
-            handleRoute();
-        }
-
-        // Search
-        async function renderSearch() {
-            app.innerHTML = `
-                <h1>Search</h1>
-                <div class="card">
-                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                        <button onclick="showMetadataSearch()" id="btn-metadata" class="secondary">Search Metadata</button>
-                        <button onclick="showManualSearch()" id="btn-manual" class="primary">Manual Search (Advanced)</button>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium truncate" x-text="$store.user.username"></p>
+                        <p class="text-xs opacity-70" x-text="$store.user.role"></p>
                     </div>
-                    
-                    <div id="metadata-search-panel">
-                        <form onsubmit="handleSearch(event)" style="display: flex; gap: 1rem;">
-                            <input type="text" id="search-q" placeholder="Search for movies, TV, music, books or manga..." style="flex: 1;">
-                            <button type="submit" style="width: 120px;">Search</button>
-                        </form>
-                    </div>
-                    
-                    <div id="manual-search-panel" style="display: none;">
-                        <form onsubmit="handleManualSearch(event)" style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                            <input type="text" id="manual-search-q" placeholder="Enter release name, title, or any search query..." style="flex: 1; min-width: 300px;">
-                            <select id="manual-search-type" style="padding: 0.5rem;">
-                                <option value="movie">Movie</option>
-                                <option value="tv">TV</option>
-                                <option value="music">Music</option>
-                                <option value="book">Book</option>
-                            </select>
-                            <select id="manual-search-media" style="padding: 0.5rem;">
-                                <option value="0">-- Not linked to library --</option>
-                            </select>
-                            <button type="submit" style="width: 150px;">Search All Indexers</button>
-                        </form>
-                        <p style="margin-top: 0.5rem; font-size: 0.85rem; color: #6c757d;">
-                            <strong>Manual Search:</strong> Searches all configured indexers/trackers. Use this to find specific releases. 
-                            After selecting a result, you can force download even if quality doesn't match your preferences.
-                        </p>
-                    </div>
+                    <button @click="$store.user.logout()" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+                        <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                        </svg>
+                    </button>
                 </div>
-                <div id="search-results" class="grid" style="margin-top: 2rem;"></div>
-            `;
-            
-            loadMediaOptions();
-        }
+                <a x-show="!$store.user.authenticated" href="/login" class="btn btn-primary w-full justify-center">
+                    Login
+                </a>
+            </div>
+        </aside>
         
-        function showMetadataSearch() {
-            document.getElementById('metadata-search-panel').style.display = 'block';
-            document.getElementById('manual-search-panel').style.display = 'none';
-            document.getElementById('btn-metadata').className = 'primary';
-            document.getElementById('btn-manual').className = 'secondary';
-        }
-        
-        function showManualSearch() {
-            document.getElementById('metadata-search-panel').style.display = 'none';
-            document.getElementById('manual-search-panel').style.display = 'block';
-            document.getElementById('btn-metadata').className = 'secondary';
-            document.getElementById('btn-manual').className = 'primary';
-        }
-        
-        async function loadMediaOptions() {
-            const typeSelect = document.getElementById('manual-search-media');
-            
-            const types = ['movie', 'tv', 'music', 'book', 'manga'];
-            for (const type of types) {
-                try {
-                    const res = await fetch(`/api/v1/media?type=${type}`);
-                    const data = await res.json();
-                    const items = data[`${type}s`] || data[type] || [];
-                    
-                    items.forEach(item => {
-                        const opt = document.createElement('option');
-                        opt.value = `${type}:${item.ID}`;
-                        opt.textContent = `${type.charAt(0).toUpperCase() + type.slice(1)}: ${item.Title}${item.Year ? ' (' + item.Year + ')' : ''}`;
-                        typeSelect.appendChild(opt);
-                    });
-                } catch (e) {
-                    console.error('Failed to load media for type:', type, e);
-                }
-            }
-        }
-
-        window.handleSearch = async (e) => {
-            e.preventDefault();
-            const q = document.getElementById('search-q').value;
-            const resultsDiv = document.getElementById('search-results');
-            resultsDiv.innerHTML = 'Searching...';
-            
-            try {
-                const res = await fetch('/api/v1/search/metadata?q=' + encodeURIComponent(q));
-                const data = await res.json();
-                
-                let html = '';
-                if (data.type === 'metadata') {
-                    data.results.forEach(r => {
-                        html += `
-                            <div class="card">
-                                <div style="display:flex; gap: 1rem;">
-                                    <img src="${r.PosterURL || 'https://via.placeholder.com/80x120?text=No+Image'}" style="width: 80px; border-radius: 4px; object-fit: cover;">
-                                    <div style="flex: 1;">
-                                        <div style="display:flex; justify-content: space-between; align-items: flex-start;">
-                                            <strong>${r.Title} (${r.Year || 'N/A'})</strong>
-                                            <span class="badge">${r.Type}</span>
-                                        </div>
-                                        <small style="color: #6c757d;">${r.ExternalSrc}: ${r.ExternalID} | Rating: ${r.VoteAverage || 'N/A'}</small><br>
-                                        <p style="font-size: 0.8rem; margin: 0.5rem 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">${r.Overview || 'No description available.'}</p>
-                                        <button onclick="addToLibrary('${r.Type}', '${r.Title.replace(/'/g, "\\'")}', ${r.Year}, '${r.ExternalID}', '${r.ExternalSrc}')">Add to Library</button>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    });
-                } else {
-                    data.results.forEach(r => {
-                        html += `
-                            <div class="card">
-                                <strong>${r.Title}</strong><br>
-                                <small style="color: #6c757d;">${r.Indexer} | ${(r.Size / 1024 / 1024 / 1024).toFixed(2)} GB</small>
-                                <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
-                                    <button onclick="quickAdd('movie', '${r.Title.replace(/'/g, "\\'")}', '${r.Link}')">Add as Movie</button>
-                                    <button class="secondary" onclick="quickAdd('tv', '${r.Title.replace(/'/g, "\\'")}', '${r.Link}')">Add as TV</button>
-                                </div>
-                            </div>
-                        `;
-                    });
-                }
-                resultsDiv.innerHTML = html || '<p>No results found.</p>';
-            } catch (err) {
-                resultsDiv.innerHTML = `<p style="color: #dc3545;">Search failed: ${err.message}</p>`;
-            }
-        };
-        
-        let searchWs = null;
-        let searchResults = [];
-        let searchMediaType = '';
-        let searchQuery = '';
-        
-        window.handleManualSearch = async (e) => {
-            e.preventDefault();
-            const q = document.getElementById('manual-search-q').value;
-            const mediaType = document.getElementById('manual-search-type').value;
-            const mediaSelect = document.getElementById('manual-search-media');
-            const selectedMedia = mediaSelect.value;
-            
-            let mediaId = 0;
-            let linkedType = mediaType;
-            if (selectedMedia && selectedMedia !== '0') {
-                const [type, id] = selectedMedia.split(':');
-                mediaId = parseInt(id);
-                linkedType = type;
-            }
-            
-            if (!q) {
-                alert('Please enter a search query');
-                return;
-            }
-            
-            if (searchWs) {
-                searchWs.close();
-            }
-            
-            searchResults = [];
-            searchMediaType = linkedType;
-            searchQuery = q;
-            
-            const resultsDiv = document.getElementById('search-results');
-            resultsDiv.innerHTML = `
-                <div id="ws-search-status">
-                    <p>Connecting to search service...</p>
-                </div>
-                <div id="ws-search-results"></div>
-            `;
-            
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(linkedType)}&media_id=${mediaId}`;
-            
-            try {
-                searchWs = new WebSocket(wsUrl);
-                
-                searchWs.onopen = () => {
-                    document.getElementById('ws-search-status').innerHTML = '<p>Searching all indexers...</p>';
-                };
-                
-                searchWs.onmessage = (event) => {
-                    const msg = JSON.parse(event.data);
-                    handleSearchMessage(msg);
-                };
-                
-                searchWs.onerror = (error) => {
-                    document.getElementById('ws-search-status').innerHTML = `<p style="color: #dc3545;">WebSocket error: ${error}</p>`;
-                };
-                
-                searchWs.onclose = () => {
-                    document.getElementById('ws-search-status').innerHTML += '<p style="color: #6c757d;">Connection closed.</p>';
-                };
-            } catch (err) {
-                resultsDiv.innerHTML = `<p style="color: #dc3545;">Failed to connect: ${err.message}</p>`;
-            }
-        };
-        
-        function handleSearchMessage(msg) {
-            const statusDiv = document.getElementById('ws-search-status');
-            const resultsDiv = document.getElementById('ws-search-results');
-            
-            switch (msg.type) {
-                case 'session_start':
-                    statusDiv.innerHTML = `<p>Session started: ${msg.payload.session_id}</p>`;
-                    break;
-                    
-                case 'search_started':
-                    statusDiv.innerHTML = `<p>Searching ${msg.payload.indexers_count} indexers for "${msg.payload.query}"...</p>`;
-                    break;
-                    
-                case 'indexer_complete':
-                    statusDiv.innerHTML = `<p>${msg.payload.indexer} found ${msg.payload.found} results</p>`;
-                    break;
-                    
-                case 'indexer_error':
-                    statusDiv.innerHTML = `<p style="color: #ffc107;">${msg.payload.indexer}: ${msg.payload.error}</p>`;
-                    break;
-                    
-                case 'result':
-                    searchResults.push(msg.payload);
-                    renderLiveResult(msg.payload, searchResults.length - 1);
-                    break;
-                    
-                case 'search_complete':
-                    statusDiv.innerHTML = `<p><strong>Search complete!</strong> Found ${msg.payload.total_results} total releases.</p>`;
-                    if (searchResults.length > 0) {
-                        document.getElementById('download-section').style.display = 'block';
-                    }
-                    break;
-            }
-        }
-        
-        function renderLiveResult(result, idx) {
-            const resultsDiv = document.getElementById('ws-search-results');
-            const sizeGB = (result.Size / 1024 / 1024 / 1024).toFixed(2);
-            const freeTag = result.IsFreeleech ? '<span class="badge" style="background: #d1e7dd; color: #0f5132;">Freeleech</span>' : '';
-            const repackTag = result.IsRepack ? '<span class="badge" style="background: #fff3cd; color: #664d03;">Repack</span>' : '';
-            
-            const html = `
-                <div class="card" id="result-${idx}" style="border-left: 4px solid ${result.IsFreeleech ? '#d1e7dd' : '#dee2e6'}; ${idx === searchResults.length - 1 ? 'background: #f8f9fa;' : ''}">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                        <div style="flex: 1;">
-                            <strong>${result.Title}</strong><br>
-                            <small style="color: #6c757d;">
-                                ${result.Indexer} | ${result.Quality || 'Unknown quality'} | ${result.Resolution || ''} | ${sizeGB} GB | 
-                                Seeders: ${result.Seeders} | Leechers: ${result.Leechers}
-                            </small>
-                            <div style="margin-top: 0.5rem;">
-                                ${freeTag} ${repackTag}
-                                ${result.Codec ? '<span class="badge">' + result.Codec + '</span>' : ''}
-                            </div>
-                        </div>
-                        <button onclick="downloadWSSearchResult(${idx})">Download</button>
-                    </div>
-                </div>
-            `;
-            
-            resultsDiv.innerHTML += html;
-        }
-        
-        window.downloadWSSearchResult = async (resultIdx) => {
-            const result = searchResults[resultIdx];
-            if (!result) {
-                alert('Result not found');
-                return;
-            }
-            
-            const forceDownload = document.getElementById('force-download')?.checked || false;
-            const mediaSelect = document.getElementById('manual-search-media');
-            const selectedMedia = mediaSelect.value;
-            
-            let mediaId = 0;
-            let linkedType = searchMediaType;
-            if (selectedMedia && selectedMedia !== '0') {
-                const [type, id] = selectedMedia.split(':');
-                mediaId = parseInt(id);
-                linkedType = type;
-            }
-            
-            try {
-                const res = await fetch('/api/v1/search/ws-session/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session_id: 'ws-session',
-                        result_index: resultIdx,
-                        media_id: mediaId,
-                        media_type: linkedType,
-                        title: searchQuery,
-                        quality: result.Quality || '1080p',
-                        force: forceDownload,
-                        result: result
-                    })
-                });
-                
-                const data = await res.json();
-                
-                if (data.job_id) {
-                    alert(`Download queued! Job ID: ${data.job_id}${forceDownload ? ' (Force download enabled)' : ''}`);
-                    if (searchWs) {
-                        searchWs.close();
-                        searchWs = null;
-                    }
-                    navigate('/downloads');
-                } else {
-                    alert('Failed to queue download');
-                }
-            } catch (err) {
-                alert('Error: ' + err.message);
-            }
-        };
-        
-        function renderManualSearchResults(results, sessionId, mediaType, query) {
-            const resultsDiv = document.getElementById('search-results');
-            
-            let html = `<h3>Found ${results.length} releases</h3>`;
-            html += `<p style="margin-bottom: 1rem;">Showing results for: <strong>${query}</strong></p>`;
-            html += `<div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
-                <label style="display: flex; align-items: center; gap: 0.5rem;">
-                    <input type="checkbox" id="force-download"> 
-                    <strong>Force download</strong> (download even if quality doesn't match)
-                </label>
-            </div>`;
-            
-            results.forEach((r, idx) => {
-                const sizeGB = (r.Size / 1024 / 1024 / 1024).toFixed(2);
-                const freeTag = r.IsFreeleech ? '<span class="badge" style="background: #d1e7dd; color: #0f5132;">Freeleech</span>' : '';
-                const repackTag = r.IsRepack ? '<span class="badge" style="background: #fff3cd; color: #664d03;">Repack</span>' : '';
-                
-                html += `
-                    <div class="card" style="border-left: 4px solid ${r.IsFreeleech ? '#d1e7dd' : '#dee2e6'};">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                            <div style="flex: 1;">
-                                <strong>${r.Title}</strong><br>
-                                <small style="color: #6c757d;">
-                                    ${r.Indexer} | ${r.Quality || 'Unknown quality'} | ${r.Resolution || ''} | ${sizeGB} GB | 
-                                    Seeders: ${r.Seeders} | Leechers: ${r.Leechers}
-                                </small>
-                                <div style="margin-top: 0.5rem;">
-                                    ${freeTag} ${repackTag}
-                                    ${r.Codec ? '<span class="badge">' + r.Codec + '</span>' : ''}
-                                </div>
-                            </div>
-                            <button onclick="downloadManualResult(${idx}, '${sessionId}', '${mediaType}', '${query.replace(/'/g, "\\'")}')">
-                                Download
-                            </button>
-                        </div>
-                    </div>
-                `;
-            });
-            
-            html += `<div style="margin-top: 1rem; text-align: center;">
-                <button class="secondary" onclick="clearSearchSession('${sessionId}')">Clear Search</button>
-            </div>`;
-            
-            resultsDiv.innerHTML = html;
-        }
-        
-        window.downloadManualResult = async (resultIdx, sessionId, mediaType, query) => {
-            const forceDownload = document.getElementById('force-download')?.checked || false;
-            const mediaSelect = document.getElementById('manual-search-media');
-            const selectedMedia = mediaSelect.value;
-            
-            let mediaId = 0;
-            let linkedType = mediaType;
-            if (selectedMedia && selectedMedia !== '0') {
-                const [type, id] = selectedMedia.split(':');
-                mediaId = parseInt(id);
-                linkedType = type;
-            }
-            
-            try {
-                const res = await fetch(`/api/v1/search/${sessionId}/download`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session_id: sessionId,
-                        result_index: resultIdx,
-                        media_id: mediaId,
-                        media_type: linkedType,
-                        title: query,
-                        quality: '1080p',
-                        force: forceDownload
-                    })
-                });
-                
-                const data = await res.json();
-                
-                if (data.job_id) {
-                    alert(`Download queued! Job ID: ${data.job_id}${forceDownload ? ' (Force download enabled)' : ''}`);
-                    navigate('/downloads');
-                } else {
-                    alert('Failed to queue download');
-                }
-            } catch (err) {
-                alert('Error: ' + err.message);
-            }
-        };
-        
-        window.clearSearchSession = async (sessionId) => {
-            try {
-                await fetch(`/api/v1/search/${sessionId}`, { method: 'DELETE' });
-                document.getElementById('search-results').innerHTML = '<p>Search cleared.</p>';
-            } catch (err) {
-                console.error('Failed to clear search session:', err);
-            }
-        };
-
-        window.addToLibrary = async (type, title, year, externalId, externalSrc) => {
-            const res = await fetch('/api/v1/media', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    type, 
-                    title, 
-                    year, 
-                    external_id: externalId, 
-                    external_src: externalSrc,
-                    quality: '1080p' 
-                })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                alert(`${title} added to library!`);
-                if (type === 'movie' || type === 'tv') {
-                    navigate(`/${type}/${data.id}`);
-                } else {
-                    const target = {
-                        'music': '/music',
-                        'book': '/books',
-                        'manga': '/manga'
-                    }[type] || '/';
-                    navigate(target);
-                }
-            }
-        };
-
-        window.quickAdd = async (type, title, link) => {
-            // 1. Add to library
-            const res = await fetch('/api/v1/media', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type, title, quality: '1080p' })
-            });
-            const data = await res.json();
-            
-            // 2. Trigger download
-            await fetch('/api/v1/downloads', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    type: 'magnet',
-                    media_type: type,
-                    media_id: data.id,
-                    title: title,
-                    data: link
-                })
-            });
-            alert('Added to library and started download!');
-            navigate(type === 'movie' ? '/movies' : '/tv');
-        };
-
-        // Subtitles
-        window.showSubtitles = async (type, id) => {
-            showModal('<h3>Subtitles</h3><p>Loading...</p>');
-            const res = await fetch(`/api/v1/media/${type}/${id}/subtitles`);
-            const data = await res.json();
-            
-            let html = `<h3>Subtitles</h3>`;
-            if (data.subtitles && data.subtitles.length > 0) {
-                html += '<ul>' + data.subtitles.map(s => `<li>${s.split('/').pop()}</li>`).join('') + '</ul>';
-            } else {
-                html += '<p>No local subtitles found.</p>';
-            }
-            
-            html += `
-                <div style="margin-top: 1.5rem; border-top: 1px solid #eee; pt: 1rem;">
-                    <h4>Download New</h4>
-                    <form onsubmit="event.preventDefault(); triggerSubDownload('${type}', ${id})">
-                        <select id="sub-lang" style="padding: 0.5rem; width: 100%; margin-bottom: 1rem;">
-                            <option value="eng">English</option>
-                            <option value="spa">Spanish</option>
-                            <option value="fra">French</option>
-                            <option value="ger">German</option>
-                        </select>
-                        <button type="submit" style="width: 100%">Search & Download</button>
-                    </form>
-                </div>
-                <button class="secondary" style="margin-top: 1rem; width: 100%" onclick="closeModal()">Close</button>
-            `;
-            showModal(html);
-        };
-
-        window.triggerSubDownload = async (type, id) => {
-            const lang = document.getElementById('sub-lang').value;
-            await fetch(`/api/v1/media/${type}/${id}/subtitles`, {
-                method: 'POST',
-                body: JSON.stringify({ language: lang })
-            });
-            alert('Subtitle download triggered!');
-            closeModal();
-        };
-
-        // Admin
-        async function renderRSS() {
-            app.innerHTML = '<h1>RSS Feeds</h1><div id="rss-list"></div>';
-            const res = await fetch('/api/v1/rss');
-            const feeds = await res.json();
-            let html = '<table><thead><tr><th>Name</th><th>URL</th><th>Actions</th></tr></thead><tbody>';
-            feeds.forEach(f => {
-                html += `<tr><td>${f.Name}</td><td>${f.URL}</td><td><button class="danger" onclick="deleteRSS(${f.ID})">Remove</button></td></tr>`;
-            });
-            html += '</tbody></table>';
-            document.getElementById('rss-list').innerHTML = html;
-        }
-
-        async function renderSettings() {
-            app.innerHTML = '<h1>Settings</h1><div id="settings-loading">Loading...</div>';
-            
-            const res = await fetch('/api/v1/settings');
-            const settings = await res.json();
-            
-            let html = '';
-            
-            // Server
-            html += '<div class="card">';
-            html += '<h3>Server</h3>';
-            html += '<table class="settings-table">';
-            html += `<tr><td>Host</td><td>${settings.server?.host || '-'}</td></tr>`;
-            html += `<tr><td>Port</td><td>${settings.server?.port || '-'}</td></tr>`;
-            html += `<tr><td>URL</td><td>${settings.server?.url || '-'}</td></tr>`;
-            html += '</table></div>';
-            
-            // Database
-            html += '<div class="card">';
-            html += '<h3>Database</h3>';
-            html += '<table class="settings-table">';
-            html += `<tr><td>Path</td><td>${settings.database?.path || '-'}</td></tr>`;
-            html += '</table></div>';
-            
-            // Download
-            html += '<div class="card">';
-            html += '<h3>Download</h3>';
-            html += '<table class="settings-table">';
-            html += `<tr><td>Download Path</td><td>${settings.download?.path || '-'}</td></tr>`;
-            html += `<tr><td>Temp Path</td><td>${settings.download?.temp_path || '-'}</td></tr>`;
-            if (settings.download?.torrent) {
-                html += `<tr><td> Torrent Port</td><td>${settings.download.torrent.port || '-'}</td></tr>`;
-                html += `<tr><td>Max Connections</td><td>${settings.download.torrent.max_connections || '-'}</td></tr>`;
-                html += `<tr><td>Max Peers/Torrent</td><td>${settings.download.torrent.max_peers_per_torrent || '-'}</td></tr>`;
-            }
-            html += '</table></div>';
-            
-            // Library (Storage Locations)
-            const mediaTypes = ['movies', 'tv', 'music', 'books'];
-            for (const mt of mediaTypes) {
-                if (settings.library && settings.library[mt] && settings.library[mt].length > 0) {
-                    html += '<div class="card">';
-                    html += `<h3>Library - ${mt.charAt(0).toUpperCase() + mt.slice(1)}</h3>`;
-                    html += '<table class="settings-table">';
-                    for (const loc of settings.library[mt]) {
-                        html += '<tr><td colspan="2" class="location-header">';
-                        html += `<strong>${loc.path}</strong>`;
-                        if (loc.type) html += ` (${loc.type})`;
-                        html += '</td></tr>';
-                        if (loc.type === 's3') {
-                            html += `<tr><td>Bucket</td><td>${loc.bucket || '-'}</td></tr>`;
-                            html += `<tr><td>Region</td><td>${loc.region || '-'}</td></tr>`;
-                            html += `<tr><td>Endpoint</td><td>${loc.endpoint || '-'}</td></tr>`;
-                            html += `<tr><td>Priority</td><td>${loc.priority || '-'}</td></tr>`;
-                        }
-                    }
-                    html += '</table></div>';
-                }
-            }
-            
-            // TLS
-            if (settings.tls) {
-                html += '<div class="card">';
-                html += '<h3>TLS</h3>';
-                html += '<table class="settings-table">';
-                html += `<tr><td>Enabled</td><td>${settings.tls.enabled ? 'Yes' : 'No'}</td></tr>`;
-                if (settings.tls.domain) html += `<tr><td>Domain</td><td>${settings.tls.domain}</td></tr>`;
-                html += '</table></div>';
-            }
-            
-            // Auth
-            html += '<div class="card">';
-            html += '<h3>Authentication</h3>';
-            html += '<table class="settings-table">';
-            html += `<tr><td>OIDC Enabled</td><td>${settings.auth?.oidc_enabled ? 'Yes' : 'No'}</td></tr>`;
-            if (settings.auth?.providers && settings.auth.providers.length > 0) {
-                html += '<tr><td>Providers</td><td>' + settings.auth.providers.map(p => p.name).join(', ') + '</td></tr>';
-            }
-            html += '</table></div>';
-            
-            // Metadata API
-            html += '<div class="card">';
-            html += '<h3>Metadata API</h3>';
-            html += '<table class="settings-table">';
-            html += `<tr><td>URL</td><td>${settings.metadata_api?.url || '-'}</td></tr>`;
-            html += `<tr><td>API Key</td><td>${settings.metadata_api?.api_key ? '***' : '-'}</td></tr>`;
-            html += `<tr><td>Timeout</td><td>${settings.metadata_api?.timeout || '-'}</td></tr>`;
-            html += '</table></div>';
-            
-            // Actions
-            html += '<div class="card">';
-            html += '<h3>Actions</h3>';
-            html += '<button class="primary" onclick="verifyMedia()">Verify Media Storage</button> ';
-            html += '<button class="secondary" onclick="reloadConfig()">Reload Config</button>';
-            html += '<div id="action-result" style="margin-top:10px;"></div>';
-            html += '</div>';
-            
-            app.innerHTML = html;
-        }
-        
-        async function verifyMedia() {
-            const resultDiv = document.getElementById('action-result');
-            resultDiv.innerHTML = 'Verifying...<div id="verify-progress"></div>';
-            try {
-                const res = await fetch('/api/v1/media/verify', { method: 'POST' });
-                const data = await res.json();
-                resultDiv.innerHTML = `Verification complete: ${data.success} succeeded, ${data.failed} failed of ${data.total} total`;
-            } catch(e) {
-                resultDiv.innerHTML = 'Error: ' + e.message;
-            }
-        }
-        
-        // WS update handler for settings page
-        window.onWSUpdate = function(path, data) {
-            if (path === '/admin/verify' || path === '/settings') {
-                const progressDiv = document.getElementById('verify-progress');
-                if (progressDiv && data.status) {
-                    if (data.status === 'starting') {
-                        progressDiv.innerHTML = 'Verification started...';
-                    } else if (data.status === 'complete') {
-                        progressDiv.innerHTML = `Complete: ${data.success} succeeded, ${data.failed} failed`;
-                    }
-                }
-            }
-        };
-        
-        async function reloadConfig() {
-            const resultDiv = document.getElementById('action-result');
-            resultDiv.innerHTML = 'Reloading...';
-            try {
-                const res = await fetch('/api/v1/config/reload', { method: 'POST' });
-                const data = await res.json();
-                resultDiv.innerHTML = 'Config reloaded: ' + data.status;
-            } catch(e) {
-                resultDiv.innerHTML = 'Error: ' + e.message;
-            }
-        }
-
-        // Init
-        checkAuth().then(handleRoute);
-    </script>
+        <!-- Main Content -->
+        <main class="flex-1 overflow-auto p-6">
+            {{template "content" .}}
+        </main>
+    </div>
 </body>
 </html>
 {{end}}

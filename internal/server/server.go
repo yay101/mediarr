@@ -43,6 +43,9 @@ type App struct {
 }
 
 func New(app *App) *Server {
+	// Initialize debug logging
+	initDebugLog()
+
 	mux := http.NewServeMux()
 	wsHub := NewWSHub()
 

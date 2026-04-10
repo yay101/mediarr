@@ -1,0 +1,239 @@
+{{define "title"}}Dashboard{{end}}
+
+{{define "content"}}
+<div x-data="dashboard()">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold">Dashboard</h1>
+        <div class="flex items-center gap-2 text-sm opacity-70">
+            <span>Last updated:</span>
+            <span x-text="lastUpdated"></span>
+            <button @click="refresh()" class="btn btn-ghost btn-sm">
+                <svg class="w-4 h-4" :class="{ 'animate-spin': loading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="card">
+            <div class="text-sm opacity-70 mb-1">Movies</div>
+            <div class="text-2xl font-bold" x-text="stats.movies">-</div>
+            <div class="text-sm opacity-70">
+                <span class="text-green-600 dark:text-green-400" x-text="stats.moviesAvailable"></span> available
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="text-sm opacity-70 mb-1">TV Shows</div>
+            <div class="text-2xl font-bold" x-text="stats.tvShows">-</div>
+            <div class="text-sm opacity-70">
+                <span class="text-green-600 dark:text-green-400" x-text="stats.tvEpisodes"></span> episodes
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="text-sm opacity-70 mb-1">Downloads</div>
+            <div class="text-2xl font-bold" x-text="stats.downloads.active">-</div>
+            <div class="text-sm opacity-70">
+                <span class="text-yellow-600 dark:text-yellow-400" x-text="stats.downloads.active"></span> active,
+                <span x-text="stats.downloads.queued"></span> queued
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="text-sm opacity-70 mb-1">RSS Feeds</div>
+            <div class="text-2xl font-bold" x-text="stats.rssFeeds">-</div>
+            <div class="text-sm opacity-70">
+                <span x-text="stats.rssFeeds"></span> active feeds
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity & Upcoming -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Recent Downloads -->
+        <div class="card">
+            <h2 class="text-lg font-semibold mb-4">Recent Downloads</h2>
+            <div x-show="recentDownloads.length === 0" class="text-center py-8 opacity-50">
+                No recent downloads
+            </div>
+            <div class="space-y-3" x-show="recentDownloads.length > 0">
+                <template x-for="job in recentDownloads" :key="job.id">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium truncate" x-text="job.title"></p>
+                            <p class="text-sm opacity-70" x-text="job.status"></p>
+                        </div>
+                        <div class="ml-4 w-24">
+                            <div class="progress-bar">
+                                <div class="progress-fill" :style="'width: ' + (job.progress * 100) + '%'"></div>
+                            </div>
+                            <p class="text-xs text-right mt-1" x-text="(job.progress * 100).toFixed(0) + '%'"></p>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Upcoming Episodes -->
+        <div class="card">
+            <h2 class="text-lg font-semibold mb-4">Upcoming Episodes</h2>
+            <div x-show="upcomingEpisodes.length === 0" class="text-center py-8 opacity-50">
+                No upcoming episodes in the next 30 days
+            </div>
+            <div class="space-y-3" x-show="upcomingEpisodes.length > 0">
+                <template x-for="ep in upcomingEpisodes" :key="ep.id">
+                    <div class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div class="w-12 h-12 bg-indigo-100 dark:bg-indigo-900 rounded-lg flex items-center justify-center shrink-0">
+                            <span class="text-xs font-bold text-indigo-600 dark:text-indigo-300" x-text="'S' + String(ep.season).padStart(2, '0') + 'E' + String(ep.episode).padStart(2, '0')"></span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium truncate" x-text="ep.title"></p>
+                            <p class="text-sm opacity-70" x-text="ep.showTitle"></p>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <p class="text-sm font-medium" x-text="formatDate(ep.airDate)"></p>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function dashboard() {
+    return {
+        loading: false,
+        lastUpdated: 'just now',
+        stats: {
+            movies: '-',
+            moviesAvailable: 0,
+            tvShows: '-',
+            tvEpisodes: 0,
+            downloads: { active: 0, queued: 0 },
+            rssFeeds: '-'
+        },
+        recentDownloads: [],
+        upcomingEpisodes: [],
+        
+        init() {
+            this.refresh();
+            
+            // Subscribe to WebSocket updates
+            Alpine.store('ws').onmessage((msg) => {
+                if (msg.type === 'update' && msg.path === '/downloads') {
+                    this.loadDownloads();
+                }
+            });
+        },
+        
+        async refresh() {
+            this.loading = true;
+            await Promise.all([
+                this.loadStats(),
+                this.loadDownloads(),
+                this.loadUpcoming()
+            ]);
+            this.loading = false;
+            this.lastUpdated = new Date().toLocaleTimeString();
+        },
+        
+        async loadStats() {
+            try {
+                // Load media counts
+                const res = await fetch('/api/v1/media?type=movie');
+                const data = await res.json();
+                this.stats.movies = data.movies?.length || 0;
+                this.stats.moviesAvailable = data.movies?.filter(m => m.Status === 4).length || 0;
+                
+                // Load TV counts
+                const tvRes = await fetch('/api/v1/media?type=tv');
+                const tvData = await tvRes.json();
+                this.stats.tvShows = tvData.tv_shows?.length || 0;
+                
+                // Load downloads
+                await this.loadDownloads();
+                
+                // Load RSS feeds
+                const rssRes = await fetch('/api/v1/rss');
+                const rssData = await rssRes.json();
+                this.stats.rssFeeds = Array.isArray(rssData) ? rssData.length : 0;
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        },
+        
+        async loadDownloads() {
+            try {
+                const res = await fetch('/api/v1/downloads');
+                const jobs = await res.json();
+                this.stats.downloads.active = jobs.filter(j => j.Status === 1).length;
+                this.stats.downloads.queued = jobs.filter(j => j.Status === 0).length;
+                this.recentDownloads = jobs.slice(0, 5).map(j => ({
+                    id: j.ID,
+                    title: j.Title,
+                    status: this.statusText(j.Status),
+                    progress: j.Progress || 0
+                }));
+            } catch (e) {
+                console.error('Failed to load downloads:', e);
+            }
+        },
+        
+        async loadUpcoming() {
+            try {
+                const res = await fetch('/api/v1/calendar');
+                const episodes = await res.json();
+                this.upcomingEpisodes = (episodes || []).slice(0, 5).map(ep => ({
+                    id: ep.ID,
+                    title: ep.Title || 'Unknown Episode',
+                    showTitle: 'TV Show',
+                    season: ep.Season || 1,
+                    episode: ep.Episode || 1,
+                    airDate: ep.AirDate
+                }));
+            } catch (e) {
+                console.error('Failed to load calendar:', e);
+            }
+        },
+        
+        statusText(status) {
+            const m = {0: 'Queued', 1: 'Downloading', 2: 'Seeding', 3: 'Paused', 4: 'Complete', 5: 'Failed'};
+            return m[status] || 'Unknown';
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return '';
+            return new Date(dateStr).toLocaleDateString();
+        }
+    };
+}
+</script>
+
+<style>
+.nav-item {
+    @apply flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors;
+    @apply text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700;
+}
+.nav-item.active {
+    @apply bg-indigo-50 text-indigo-600 dark:bg-indigo-900 dark:text-indigo-200;
+}
+.progress-bar {
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.progress-fill {
+    height: 100%;
+    background: #4f46e5;
+    transition: width 0.3s;
+}
+.dark .progress-bar {
+    background: #374151;
+}
+</style>
+{{end}}

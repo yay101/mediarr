@@ -4,11 +4,36 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/yay101/mediarr/internal/db"
 	lib "github.com/yay101/oidc"
 )
+
+var (
+	debugLog *os.File
+)
+
+func initDebugLog() {
+	var err error
+	debugLog, err = os.OpenFile("/tmp/mediarr_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		slog.Warn("failed to open debug log", "error", err)
+	} else {
+		slog.Info("debug logging enabled to /tmp/mediarr_debug.log")
+	}
+}
+
+func debugLogf(format string, args ...interface{}) {
+	if debugLog != nil {
+		msg := "[DEBUG] " + format + "\n"
+		debugLog.WriteString(fmt.Sprintf(msg, args...))
+		slog.Debug(fmt.Sprintf(msg, args...))
+	}
+}
 
 type contextKey string
 
@@ -48,6 +73,8 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
+	debugLogf("getCurrentUser: path=%s, cookies=%v", r.URL.Path, r.Cookies())
+
 	// 1. Try API Key header
 	apiKey := r.Header.Get("X-API-Key")
 	if apiKey == "" {
@@ -55,6 +82,7 @@ func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
 	}
 
 	if apiKey != "" {
+		debugLogf("getCurrentUser: trying API key: %s", apiKey)
 		database := s.app.DB()
 		if database != nil {
 			table, _ := database.Users()
@@ -62,6 +90,7 @@ func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
 				return u.APIKey == apiKey
 			})
 			if len(users) > 0 {
+				debugLogf("getCurrentUser: found user by API key, id=%d, username=%s", users[0].ID, users[0].Username)
 				return &users[0], nil
 			}
 		}
@@ -70,6 +99,7 @@ func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
 	// 2. Try session cookie
 	cookie, err := r.Cookie("mediarr_session")
 	if err == nil {
+		debugLogf("getCurrentUser: found session cookie, value=%s", cookie.Value)
 		database := s.app.DB()
 		if database != nil {
 			table, _ := database.Users()
@@ -78,8 +108,10 @@ func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
 				return u.APIKey == cookie.Value
 			})
 			if len(users) > 0 {
+				debugLogf("getCurrentUser: found user by cookie, id=%d, username=%s", users[0].ID, users[0].Username)
 				return &users[0], nil
 			}
+			debugLogf("getCurrentUser: no user found with cookie value")
 		}
 	}
 
@@ -98,13 +130,16 @@ func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
 }
 
 func (s *Server) handleOIDCCallback(accesstoken *string, refreshtoken *string, expiry *int, idtoken lib.IDToken) (bool, *http.Cookie) {
+	debugLogf("OIDC Callback: subject=%s, email=%s", idtoken.Subject, idtoken.Email)
 	database := s.app.DB()
 	if database == nil {
+		debugLogf("OIDC Callback: database is nil")
 		return false, nil
 	}
 
 	table, err := database.Users()
 	if err != nil {
+		debugLogf("OIDC Callback: failed to get users table: %v", err)
 		return false, nil
 	}
 
@@ -112,10 +147,12 @@ func (s *Server) handleOIDCCallback(accesstoken *string, refreshtoken *string, e
 	users, _ := table.Filter(func(u db.User) bool {
 		return u.OIDCSubject == idtoken.Subject
 	})
+	debugLogf("OIDC Callback: found %d existing users with subject", len(users))
 
 	var user *db.User
 	if len(users) > 0 {
 		user = &users[0]
+		debugLogf("OIDC Callback: existing user found, id=%d, username=%s", user.ID, user.Username)
 	} else {
 		// Create new user
 		user = &db.User{
@@ -124,9 +161,11 @@ func (s *Server) handleOIDCCallback(accesstoken *string, refreshtoken *string, e
 			APIKey:      generateAPIKey(),
 			Role:        db.RoleUser,
 		}
+		debugLogf("OIDC Callback: creating new user, apiKey=%s", user.APIKey)
 		// If it's the first user, make them admin? Or use config.
 		id, _ := table.Insert(user)
 		user.ID = id
+		debugLogf("OIDC Callback: new user inserted with id=%d", user.ID)
 	}
 
 	// Create session cookie

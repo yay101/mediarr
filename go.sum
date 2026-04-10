@@ -52,10 +52,10 @@ github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsK
 github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
-github.com/yay101/embeddb v1.6.1 h1:6ZWDcnVEQIG8mgsqhaDhNQm7Ylb5pm9KiGeEPT19nXM=
-github.com/yay101/embeddb v1.6.1/go.mod h1:XMW3ThV+1REFCmkvWogmNXpfinsJ3+AlDyqXbidKcHM=
-github.com/yay101/embeddbcore v0.1.4 h1:DLhWoJtDMoxx/V5jhFjSUjk+E+sxeKJrSjg6FFi2xmY=
-github.com/yay101/embeddbcore v0.1.4/go.mod h1:lUAbYOm+zaTjhO9ABKoyWpPHE8zsD4sOfaM2noNNs1o=
+github.com/yay101/embeddb v1.6.2 h1:J22Vqil6IC9/rsYlNytftdl4vbiH4HtwkBhtWPo+SdA=
+github.com/yay101/embeddb v1.6.2/go.mod h1:VBmpOTdyeO+NqxotteLfRCa1kReCm07k2m8KuhEjacM=
+github.com/yay101/embeddbcore v0.2.0 h1:O1qT0J8DtvTRthJ50e2HvVywlWf095ftAMi/BPKAeIE=
+github.com/yay101/embeddbcore v0.2.0/go.mod h1:lUAbYOm+zaTjhO9ABKoyWpPHE8zsD4sOfaM2noNNs1o=
 github.com/yay101/oidc v0.1.0 h1:pmVpddo/KVQ0vXIJ8Wl4WqRwxmOruwgcwkyzIXbCJYc=
 github.com/yay101/oidc v0.1.0/go.mod h1:WK1XHFAXLCqQnxTqNoazvWcvU1xn3ZEpcF/rwTvXooI=
 golang.org/x/crypto v0.44.0 h1:A97SsFvM3AIwEEmTBiaxPPTYpDC47w720rdiiUvgoAU=
