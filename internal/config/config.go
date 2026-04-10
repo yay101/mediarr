@@ -17,6 +17,7 @@ type Config struct {
 	TLS         TLSConfig         `yaml:"tls"`
 	Auth        AuthConfig        `yaml:"auth"`
 	MetadataAPI MetadataAPIConfig `yaml:"metadata_api"`
+	AI          AIConfig          `yaml:"ai"`
 }
 
 type LibraryConfig struct {
@@ -166,6 +167,52 @@ type MetadataAPIConfig struct {
 	CacheTTL Duration `yaml:"cache_ttl"`
 }
 
+type AIConfig struct {
+	Enabled   bool                    `yaml:"enabled"`
+	Provider  string                  `yaml:"provider"`
+	Model     string                  `yaml:"model"`
+	CacheTTL  Duration                `yaml:"cache_ttl"`
+	Ollama    OllamaProviderConfig    `yaml:"ollama"`
+	OpenAI    OpenAIProviderConfig    `yaml:"openai"`
+	Anthropic AnthropicProviderConfig `yaml:"anthropic"`
+	Gemini    GeminiProviderConfig    `yaml:"gemini"`
+	DeepSeek  DeepSeekProviderConfig  `yaml:"deepseek"`
+	ZAI       ZAIProviderConfig       `yaml:"zai"`
+}
+
+type OllamaProviderConfig struct {
+	Host  string `yaml:"host"`
+	Model string `yaml:"model"`
+}
+
+type OpenAIProviderConfig struct {
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"`
+}
+
+type AnthropicProviderConfig struct {
+	APIKey string `yaml:"api_key"`
+	Model  string `yaml:"model"`
+}
+
+type GeminiProviderConfig struct {
+	APIKey string `yaml:"api_key"`
+	Model  string `yaml:"model"`
+}
+
+type DeepSeekProviderConfig struct {
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"`
+}
+
+type ZAIProviderConfig struct {
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"`
+}
+
 type Duration struct {
 	value string
 }
@@ -302,6 +349,34 @@ func defaultConfig() *Config {
 		MetadataAPI: MetadataAPIConfig{
 			URL:     "http://localhost:8081",
 			Timeout: Duration{value: "30s"},
+		},
+		AI: AIConfig{
+			Enabled:  false,
+			Provider: "ollama",
+			Model:    "llama3",
+			CacheTTL: Duration{value: "24h"},
+			Ollama: OllamaProviderConfig{
+				Host:  "http://localhost:11434",
+				Model: "llama3",
+			},
+			OpenAI: OpenAIProviderConfig{
+				BaseURL: "https://api.openai.com/v1",
+				Model:   "gpt-4o",
+			},
+			Anthropic: AnthropicProviderConfig{
+				Model: "claude-sonnet-4-20250514",
+			},
+			Gemini: GeminiProviderConfig{
+				Model: "gemini-2.0-flash",
+			},
+			DeepSeek: DeepSeekProviderConfig{
+				BaseURL: "https://api.deepseek.com",
+				Model:   "deepseek-chat",
+			},
+			ZAI: ZAIProviderConfig{
+				BaseURL: "https://api.z.ai/api/paas/v4",
+				Model:   "glm-4",
+			},
 		},
 	}
 }

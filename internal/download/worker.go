@@ -2,11 +2,12 @@ package download
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,6 +19,9 @@ import (
 	"github.com/yay101/mediarr/internal/organize"
 )
 
+// Worker manages download jobs for both BitTorrent and Usenet.
+// It polls the database for queued downloads, starts active downloads,
+// tracks progress, and triggers post-download organization.
 type Worker struct {
 	db            *db.Database
 	torrentClient *torrent.Client
@@ -30,11 +34,15 @@ type Worker struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	interval      time.Duration
+
+	organizeOpts organize.OrganizeOptions
 }
 
+// activeDownload tracks an in-progress download job.
 type activeDownload struct {
 	job         *db.DownloadJob
-	infoHash    string
+	infoHash    [20]byte
+	torrent     *torrent.Torrent
 	storagePath string
 	startTime   time.Time
 	progress    float32
@@ -43,6 +51,7 @@ type activeDownload struct {
 	cancelFunc  context.CancelFunc
 }
 
+// NewWorker creates a download worker with the specified clients and database.
 func NewWorker(db *db.Database, tm *torrent.Client, um *usenet.NZBClient, mgr *Manager) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Worker{
@@ -55,20 +64,29 @@ func NewWorker(db *db.Database, tm *torrent.Client, um *usenet.NZBClient, mgr *M
 		ctx:           ctx,
 		cancel:        cancel,
 		interval:      5 * time.Second,
+		organizeOpts: organize.OrganizeOptions{
+			UseHardlink:     true,
+			DeleteLeftovers: true,
+			Overwrite:       false,
+		},
 	}
+}
+
+func (w *Worker) SetOrganizeOptions(opts organize.OrganizeOptions) {
+	w.organizeOpts = opts
 }
 
 func (w *Worker) Start() {
 	w.wg.Add(1)
 	go w.run()
-	log.Println("Download worker started")
+	slog.Info("Download worker started")
 }
 
 func (w *Worker) Stop() {
-	log.Println("Stopping download worker...")
+	slog.Info("Stopping download worker...")
 	w.cancel()
 	w.wg.Wait()
-	log.Println("Download worker stopped")
+	slog.Info("Download worker stopped")
 }
 
 func (w *Worker) run() {
@@ -137,7 +155,7 @@ func (w *Worker) updateJobProgress(id uint32, bytesDone, bytesTotal uint64, prog
 func (w *Worker) processQueue() {
 	jobs, err := w.getQueuedJobs()
 	if err != nil {
-		log.Printf("Error fetching queued downloads: %v", err)
+		slog.Error("error fetching queued downloads", "error", err)
 		return
 	}
 
@@ -148,6 +166,22 @@ func (w *Worker) processQueue() {
 	w.updateProgress()
 }
 
+func parseInfoHash(s string) ([20]byte, error) {
+	var hash [20]byte
+	if len(s) != 40 {
+		return hash, fmt.Errorf("invalid info hash length")
+	}
+	decoded, err := hex.DecodeString(s)
+	if err != nil {
+		return hash, err
+	}
+	if len(decoded) != 20 {
+		return hash, fmt.Errorf("invalid decoded length")
+	}
+	copy(hash[:], decoded)
+	return hash, nil
+}
+
 func (w *Worker) startDownload(job *db.DownloadJob) {
 	w.mu.Lock()
 	if _, exists := w.activeJobs[job.ID]; exists {
@@ -155,35 +189,40 @@ func (w *Worker) startDownload(job *db.DownloadJob) {
 		return
 	}
 
-	// Shared Global Pool: Check if another job is already downloading the same thing
-	for _, active := range w.activeJobs {
-		if active.infoHash != "" && active.infoHash == job.InfoHash {
-			slog.Info("linking job to existing active download", "job_id", job.ID, "infohash", job.InfoHash)
+	if job.Provider == db.DownloadProviderTorrent && job.InfoHash != "" {
+		hash, err := parseInfoHash(job.InfoHash)
+		if err == nil {
+			for _, active := range w.activeJobs {
+				if active.torrent != nil && active.infoHash == hash {
+					slog.Info("linking job to existing active download", "job_id", job.ID, "infohash", job.InfoHash)
 
-			// Reference the existing active state
-			sharedActive := active
+					linkedDone := active.done
+					linkedErr := active.err
 
-			newActive := &activeDownload{
-				job:        job,
-				infoHash:   sharedActive.infoHash,
-				startTime:  sharedActive.startTime,
-				done:       sharedActive.done,
-				cancelFunc: func() {}, // Don't cancel the shared one
-			}
-			w.activeJobs[job.ID] = newActive
-			w.mu.Unlock()
+					newActive := &activeDownload{
+						job:        job,
+						infoHash:   active.infoHash,
+						torrent:    active.torrent,
+						startTime:  active.startTime,
+						done:       linkedDone,
+						cancelFunc: func() {},
+					}
+					w.activeJobs[job.ID] = newActive
+					w.mu.Unlock()
 
-			_ = w.updateJobStatus(job.ID, db.DownloadStatusDownloading)
+					_ = w.updateJobStatus(job.ID, db.DownloadStatusDownloading)
 
-			go func() {
-				select {
-				case <-newActive.done:
-					w.handleCompletion(job.ID, sharedActive.err)
-				case <-w.ctx.Done():
-					w.handleCancellation(job.ID)
+					go func(done <-chan struct{}, err error) {
+						select {
+						case <-done:
+							w.handleCompletion(job.ID, err)
+						case <-w.ctx.Done():
+							w.handleCancellation(job.ID)
+						}
+					}(linkedDone, linkedErr)
+					return
 				}
-			}()
-			return
+			}
 		}
 	}
 	w.mu.Unlock()
@@ -201,7 +240,7 @@ func (w *Worker) startDownload(job *db.DownloadJob) {
 	w.mu.Unlock()
 
 	if err := w.updateJobStatus(job.ID, db.DownloadStatusDownloading); err != nil {
-		log.Printf("Error updating job status: %v", err)
+		slog.Error("error updating job status", "error", err)
 		w.cleanupJob(job.ID)
 		return
 	}
@@ -232,17 +271,34 @@ func (w *Worker) startDownload(job *db.DownloadJob) {
 }
 
 func (w *Worker) processTorrentDownload(job *db.DownloadJob, active *activeDownload) error {
+	if w.torrentClient == nil {
+		return fmt.Errorf("torrent client not configured")
+	}
+
 	var err error
 
 	if job.MagnetURI != "" {
-		active.infoHash, err = w.torrentClient.AddMagnet(job.MagnetURI)
+		t, err := w.torrentClient.AddMagnet(job.MagnetURI)
 		if err != nil {
 			return fmt.Errorf("failed to add magnet: %w", err)
 		}
+		active.torrent = t
+		active.infoHash = t.InfoHash
 	}
 
-	if job.InfoHash != "" && active.infoHash == "" {
-		active.infoHash = job.InfoHash
+	if job.InfoHash != "" && active.infoHash == ([20]byte{}) {
+		hash, err := parseInfoHash(job.InfoHash)
+		if err != nil {
+			return fmt.Errorf("invalid info hash: %w", err)
+		}
+		active.infoHash = hash
+	}
+
+	if active.torrent == nil && active.infoHash != ([20]byte{}) {
+		active.torrent, err = w.torrentClient.GetTorrent(active.infoHash)
+		if err != nil {
+			return fmt.Errorf("torrent not found: %w", err)
+		}
 	}
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -253,23 +309,20 @@ func (w *Worker) processTorrentDownload(job *db.DownloadJob, active *activeDownl
 		case <-w.ctx.Done():
 			return fmt.Errorf("cancelled")
 		case <-ticker.C:
-			if active.infoHash == "" {
+			if active.torrent == nil {
 				continue
 			}
-			status, err := w.torrentClient.GetStatus(active.infoHash)
-			if err != nil {
-				continue
-			}
+			status := active.torrent.GetStatus()
 
-			progress := float32(status.BytesDone) / float32(status.BytesTotal)
+			progress := status.Progress
 			active.progress = progress
 
 			if status.State == "seeding" || status.State == "complete" {
 				return nil
 			}
 
-			if status.Error != "" {
-				return fmt.Errorf("download error: %s", status.Error)
+			if status.State == "error" {
+				return fmt.Errorf("download error")
 			}
 		}
 	}
@@ -333,17 +386,15 @@ func (w *Worker) updateProgress() {
 		var bytesDone, bytesTotal uint64
 		var progress float32
 
-		if active.infoHash != "" && w.torrentClient != nil {
-			status, err := w.torrentClient.GetStatus(active.infoHash)
-			if err == nil {
-				bytesDone = uint64(status.BytesDone)
-				bytesTotal = uint64(status.BytesTotal)
-				progress = status.Progress
-			}
+		if active.torrent != nil && w.torrentClient != nil {
+			status := active.torrent.GetStatus()
+			bytesDone = uint64(status.BytesDone)
+			bytesTotal = uint64(status.BytesTotal)
+			progress = status.Progress
 		}
 
 		if err := w.updateJobProgress(job.ID, bytesDone, bytesTotal, progress); err != nil {
-			log.Printf("Error updating progress for job %d: %v", job.ID, err)
+			slog.Debug("error updating progress", "job_id", job.ID, "error", err)
 		}
 	}
 }
@@ -360,7 +411,7 @@ func (w *Worker) handleCompletion(jobID uint32, err error) {
 	active.cancelFunc()
 
 	if err != nil {
-		log.Printf("Download job %d failed: %v", jobID, err)
+		slog.Info("download job failed", "job_id", jobID, "error", err)
 		_ = w.updateJobStatus(jobID, db.DownloadStatusFailed)
 
 		table, err := w.db.Downloads()
@@ -373,8 +424,8 @@ func (w *Worker) handleCompletion(jobID uint32, err error) {
 			}
 		}
 	} else {
-		log.Printf("Download job %d completed successfully", jobID)
-		_ = w.updateJobStatus(jobID, db.DownloadStatusComplete)
+		slog.Info("download job completed", "job_id", jobID)
+		_ = w.updateJobStatus(jobID, db.DownloadStatusSeeding)
 
 		table, err := w.db.Downloads()
 		if err == nil {
@@ -384,7 +435,6 @@ func (w *Worker) handleCompletion(jobID uint32, err error) {
 				job.UpdatedAt = time.Now()
 				_ = table.Update(jobID, job)
 
-				// Trigger organization
 				go w.organizeJob(job, active)
 			}
 		}
@@ -399,10 +449,9 @@ func (w *Worker) organizeJob(job *db.DownloadJob, active *activeDownload) {
 	var storagePath string
 	if active.storagePath != "" {
 		storagePath = active.storagePath
-	} else if active.infoHash != "" {
-		status, err := w.torrentClient.GetStatus(active.infoHash)
-		if err == nil {
-			storagePath = status.StoragePath
+	} else if active.torrent != nil {
+		if len(active.torrent.Files) > 0 {
+			storagePath = filepath.Dir(active.torrent.Files[0].Path)
 		}
 	}
 
@@ -415,105 +464,178 @@ func (w *Worker) organizeJob(job *db.DownloadJob, active *activeDownload) {
 
 	switch job.MediaType {
 	case db.MediaTypeMovie:
-		table, err := w.db.Movies()
-		if err != nil {
-			return
-		}
-
-		var movie *db.Movie
-		if job.MediaID > 0 {
-			movie, err = table.Get(job.MediaID)
-		} else {
-			// Try to match by title
-			info := w.organizer.DetectMedia(job.Title)
-			movies, _ := table.Query("Title", info.Title)
-			if len(movies) > 0 {
-				movie = &movies[0]
-			}
-		}
-
-		if movie == nil {
-			slog.Warn("cannot organize movie: item not found in database", "title", job.Title)
-			return
-		}
-
-		destDir := cfg.Library.Movies
-		err = w.organizer.OrganizeMovie(movie, storagePath, destDir, true)
-		if err != nil {
-			slog.Error("failed to organize movie", "error", err)
-			return
-		}
-
-		// Shared Global Pool: Satisfy all other users who want this movie
-		allMovies, _ := table.Filter(func(m db.Movie) bool {
-			return m.TMDBID == movie.TMDBID && m.Status != db.MediaStatusAvailable
-		})
-		for _, m := range allMovies {
-			m.Status = db.MediaStatusAvailable
-			m.Path = movie.Path
-			m.UpdatedAt = time.Now()
-			_ = table.Update(m.ID, &m)
-		}
+		w.organizeMovie(job, active, storagePath, cfg.Library.Movies)
 
 	case db.MediaTypeTV:
-		table, err := w.db.TVEpisodes()
-		if err != nil {
-			return
-		}
+		w.organizeEpisode(job, active, storagePath, cfg.Library.TV)
+	}
 
-		var episode *db.TVEpisode
-		if job.MediaID > 0 {
-			episode, err = table.Get(job.MediaID)
-		} else {
-			// Try to match episode
-			info := w.organizer.DetectMedia(job.Title)
-			if info.Season > 0 && info.Episode > 0 {
-				eps, _ := table.Query("Season", info.Season)
-				for _, e := range eps {
-					if e.Episode == info.Episode {
-						episode = &e
-						break
-					}
+	w.updateJobOrganized(job.ID, true)
+}
+
+func (w *Worker) organizeMovie(job *db.DownloadJob, active *activeDownload, sourceDir, destDir string) {
+	table, err := w.db.Movies()
+	if err != nil {
+		return
+	}
+
+	var movie *db.Movie
+	if job.MediaID > 0 {
+		movie, err = table.Get(job.MediaID)
+	} else {
+		info := w.organizer.DetectMedia(job.Title)
+		movies, _ := table.Query("Title", info.Title)
+		if len(movies) > 0 {
+			movie = &movies[0]
+		}
+	}
+
+	if movie == nil {
+		files := w.organizer.FindMediaFiles(sourceDir)
+		if len(files) > 0 {
+			info := w.organizer.DetectMedia(filepath.Base(files[0]))
+			movie = &db.Movie{
+				Title:  info.Title,
+				Year:   info.Year,
+				Status: db.MediaStatusQueued,
+			}
+			if id, err := table.Insert(movie); err == nil {
+				movie.ID = id
+			}
+		}
+	}
+
+	if movie == nil {
+		slog.Warn("cannot organize movie: item not found", "title", job.Title)
+		return
+	}
+
+	result := w.organizer.OrganizeMovie(movie, sourceDir, destDir, w.organizeOpts)
+	if !result.Success {
+		if result.Error != nil {
+			slog.Error("failed to organize movie", "error", result.Error)
+		}
+		return
+	}
+
+	slog.Info("organized movie", "title", movie.Title, "path", result.DestPath)
+
+	allMovies, _ := table.Filter(func(m db.Movie) bool {
+		return m.TMDBID == movie.TMDBID && m.Status != db.MediaStatusAvailable
+	})
+	for _, m := range allMovies {
+		m.Status = db.MediaStatusAvailable
+		m.Path = movie.Path
+		m.UpdatedAt = time.Now()
+		_ = table.Update(m.ID, &m)
+	}
+
+	if active.torrent != nil && active.infoHash != ([20]byte{}) {
+		w.stopSeeding(active.infoHash)
+	}
+}
+
+func (w *Worker) organizeEpisode(job *db.DownloadJob, active *activeDownload, sourceDir, destDir string) {
+	table, err := w.db.TVEpisodes()
+	if err != nil {
+		return
+	}
+
+	var episode *db.TVEpisode
+	if job.MediaID > 0 {
+		episode, err = table.Get(job.MediaID)
+	} else {
+		info := w.organizer.DetectMedia(job.Title)
+		if info.Season > 0 && info.Episode > 0 {
+			eps, _ := table.Query("Season", info.Season)
+			for _, e := range eps {
+				if e.Episode == info.Episode {
+					episode = &e
+					break
 				}
 			}
 		}
+	}
 
-		if episode == nil {
-			slog.Warn("cannot organize episode: item not found in database", "title", job.Title)
-			return
-		}
-
-		showTable, err := w.db.TVShows()
-		if err != nil {
-			return
-		}
-		show, err := showTable.Get(episode.ShowID)
-		if err != nil {
-			return
-		}
-
-		destDir := cfg.Library.TV
-		err = w.organizer.OrganizeEpisode(show, episode, storagePath, destDir, true)
-		if err != nil {
-			slog.Error("failed to organize episode", "error", err)
-			return
-		}
-
-		// Shared Global Pool: Satisfy all other users who want this episode
-		allEpisodes, _ := table.Filter(func(e db.TVEpisode) bool {
-			if e.Season != episode.Season || e.Episode != episode.Episode || e.Status == db.MediaStatusAvailable {
-				return false
+	if episode == nil {
+		info := w.organizer.DetectMedia(job.Title)
+		if info.Season > 0 && info.Episode > 0 {
+			episode = &db.TVEpisode{
+				Season:  info.Season,
+				Episode: info.Episode,
+				Status:  db.MediaStatusQueued,
 			}
-			s, _ := showTable.Get(e.ShowID)
-			return s != nil && s.TMDBID == show.TMDBID
-		})
-		for _, e := range allEpisodes {
-			e.Status = db.MediaStatusAvailable
-			e.Path = episode.Path
-			e.UpdatedAt = time.Now()
-			_ = table.Update(e.ID, &e)
+			if id, err := table.Insert(episode); err == nil {
+				episode.ID = id
+			}
 		}
 	}
+
+	if episode == nil {
+		slog.Warn("cannot organize episode: item not found", "title", job.Title)
+		return
+	}
+
+	showTable, err := w.db.TVShows()
+	if err != nil {
+		return
+	}
+	show, err := showTable.Get(episode.ShowID)
+	if err != nil {
+		slog.Warn("cannot organize episode: show not found", "show_id", episode.ShowID)
+		return
+	}
+
+	result := w.organizer.OrganizeEpisode(show, episode, sourceDir, destDir, w.organizeOpts)
+	if !result.Success {
+		slog.Error("failed to organize episode", "error", result.Error)
+		return
+	}
+
+	slog.Info("organized episode", "show", show.Title, "path", result.DestPath)
+
+	allEpisodes, _ := table.Filter(func(e db.TVEpisode) bool {
+		if e.Season != episode.Season || e.Episode != episode.Episode || e.Status == db.MediaStatusAvailable {
+			return false
+		}
+		s, _ := showTable.Get(e.ShowID)
+		return s != nil && s.TMDBID == show.TMDBID
+	})
+	for _, e := range allEpisodes {
+		e.Status = db.MediaStatusAvailable
+		e.Path = episode.Path
+		e.UpdatedAt = time.Now()
+		_ = table.Update(e.ID, &e)
+	}
+
+	if active.torrent != nil && active.infoHash != ([20]byte{}) {
+		w.stopSeeding(active.infoHash)
+	}
+}
+
+func (w *Worker) stopSeeding(infoHash [20]byte) {
+	if w.torrentClient == nil {
+		return
+	}
+
+	if err := w.torrentClient.RemoveTorrent(infoHash); err != nil {
+		slog.Debug("failed to stop seeding", "infohash", fmt.Sprintf("%x", infoHash), "error", err)
+	}
+}
+
+func (w *Worker) updateJobOrganized(jobID uint32, organized bool) {
+	table, err := w.db.Downloads()
+	if err != nil {
+		return
+	}
+
+	job, err := table.Get(jobID)
+	if err != nil {
+		return
+	}
+
+	job.UpdatedAt = time.Now()
+	_ = table.Update(jobID, job)
 }
 
 func (w *Worker) handleCancellation(jobID uint32) {
@@ -525,7 +647,9 @@ func (w *Worker) handleCancellation(jobID uint32) {
 		return
 	}
 
-	if active.infoHash != "" && w.torrentClient != nil {
+	active.cancelFunc()
+
+	if active.infoHash != ([20]byte{}) && w.torrentClient != nil {
 		w.torrentClient.RemoveTorrent(active.infoHash)
 	}
 
@@ -536,13 +660,6 @@ func (w *Worker) handleCancellation(jobID uint32) {
 
 func (w *Worker) cleanupJob(jobID uint32) {
 	w.mu.Lock()
-	active, ok := w.activeJobs[jobID]
-	if ok {
-		active.cancelFunc()
-		// Only close done if it's not a shared channel (or handle carefully)
-		// For simplicity, we check if it's the primary job
-		// But closing a shared channel is fine if all listeners are prepared
-	}
 	delete(w.activeJobs, jobID)
 	w.mu.Unlock()
 }
@@ -593,7 +710,7 @@ func (w *Worker) CancelDownload(jobID uint32) error {
 		active.cancelFunc()
 	}
 
-	if active.infoHash != "" && w.torrentClient != nil {
+	if active != nil && active.infoHash != ([20]byte{}) && w.torrentClient != nil {
 		w.torrentClient.RemoveTorrent(active.infoHash)
 	}
 
@@ -616,4 +733,66 @@ func (w *Worker) GetActiveJobs() map[uint32]*activeDownload {
 		result[k] = v
 	}
 	return result
+}
+
+func (w *Worker) StopSeeding(jobID uint32) error {
+	w.mu.RLock()
+	active, ok := w.activeJobs[jobID]
+	w.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("job not found")
+	}
+
+	if active.infoHash != ([20]byte{}) && w.torrentClient != nil {
+		return w.torrentClient.RemoveTorrent(active.infoHash)
+	}
+
+	return nil
+}
+
+func (w *Worker) GetStoragePath(jobID uint32) string {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	active, ok := w.activeJobs[jobID]
+	if !ok {
+		return ""
+	}
+
+	if active.storagePath != "" {
+		return active.storagePath
+	}
+
+	if active.torrent != nil && len(active.torrent.Files) > 0 {
+		return filepath.Dir(active.torrent.Files[0].Path)
+	}
+
+	return ""
+}
+
+func (w *Worker) IsOrganizeComplete(jobID uint32) bool {
+	w.mu.RLock()
+	active, ok := w.activeJobs[jobID]
+	w.mu.RUnlock()
+
+	if !ok {
+		return false
+	}
+
+	if active.storagePath == "" {
+		return false
+	}
+
+	info, err := os.Stat(active.storagePath)
+	if err != nil {
+		return false
+	}
+
+	if info.IsDir() {
+		files := w.organizer.FindMediaFiles(active.storagePath)
+		return len(files) > 0
+	}
+
+	return true
 }

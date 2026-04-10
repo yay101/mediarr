@@ -2,31 +2,36 @@ package indexer
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
+// Category represents Usenet/BitTorrent categories used by indexers.
+// These map to Torznab/Newznab category IDs.
 type Category uint32
 
 const (
-	CategoryAll        Category = 0
-	CategoryMovie      Category = 1
-	CategoryTV         Category = 2
-	CategoryAudio      Category = 3
-	CategoryConsole    Category = 4
-	CategoryPC         Category = 5
-	CategoryTVTV       Category = 6
-	CategoryMovieOther Category = 7
-	CategoryAudioBook  Category = 8
-	CategoryComics     Category = 9
-	CategoryPictures   Category = 10
-	CategorySoftware   Category = 11
-	CategoryGames      Category = 12
-	CategoryAnime      Category = 13
-	CategoryXXX        Category = 14
-	CategoryBook       Category = 15
-	CategoryGame       Category = 16
+	CategoryAll        Category = 0  // All categories
+	CategoryMovie      Category = 1  // Movies
+	CategoryTV         Category = 2  // TV shows
+	CategoryAudio      Category = 3  // Audio/music
+	CategoryConsole    Category = 4  // Console games
+	CategoryPC         Category = 5  // PC games
+	CategoryTVTV       Category = 6  // TV episodes
+	CategoryMovieOther Category = 7  // Other movie formats
+	CategoryAudioBook  Category = 8  // Audiobooks
+	CategoryComics     Category = 9  // Comics
+	CategoryPictures   Category = 10 // Pictures
+	CategorySoftware   Category = 11 // Software
+	CategoryGames      Category = 12 // Games (general)
+	CategoryAnime      Category = 13 // Anime
+	CategoryXXX        Category = 14 // Adult content
+	CategoryBook       Category = 15 // E-books
+	CategoryGame       Category = 16 // Games (alternate)
 )
 
+// MediaType represents the type of media being searched/downloaded.
+// Used for internal categorization and matching.
 type MediaType string
 
 const (
@@ -39,51 +44,146 @@ const (
 	MediaTypeComic MediaType = "comic"
 )
 
+// IndexerCapability describes what features an indexer supports.
+// Used to determine which indexers can handle specific search types.
 type IndexerCapability struct {
-	SupportsTVSearch     bool
-	SupportsMovieSearch  bool
-	SupportsMusicSearch  bool
-	SupportsBookSearch   bool
-	SupportsAnimeSearch  bool
-	SupportsGameSearch   bool
-	SupportsAdultSearch  bool
-	SupportsRssSearch    bool
-	SupportsAudioSearch  bool
-	SupportsManualSearch bool
-	SupportsApiKey       bool
-	SupportedCategories  []Category
+	SupportsTVSearch     bool       // Can search for TV shows
+	SupportsMovieSearch  bool       // Can search for movies
+	SupportsMusicSearch  bool       // Can search for music
+	SupportsBookSearch   bool       // Can search for books/e-books
+	SupportsAnimeSearch  bool       // Can search for anime
+	SupportsGameSearch   bool       // Can search for games
+	SupportsAdultSearch  bool       // Can search adult content
+	SupportsRssSearch    bool       // Supports RSS feeds
+	SupportsAudioSearch  bool       // Can search audio specifically
+	SupportsManualSearch bool       // Supports manual searches
+	SupportsApiKey       bool       // Requires/configures API key
+	SupportedCategories  []Category // Which categories are supported
 }
 
+// SearchResult represents a single search result from an indexer.
+// Contains all relevant metadata for deciding which result to download.
 type SearchResult struct {
-	Title       string
-	Link        string
-	Guid        string
-	Category    Category
-	Categories  []Category
-	PublishDate time.Time
-	Size        int64
-	Files       int
-	Grabs       int
-	Seeders     int
-	Leechers    int
-	InfoHash    string
-	MagnetURI   string
-	TorrentURL  string
-	NZBLink     string
-	Quality     string
-	Codec       string
-	Container   string
-	Resolution  string
-	Group       string
-	Origin      string
-	Tags        []string
-	AnimeType   string
-	Episode     string
-	Season      string
-	MediaType   MediaType
-	Indexer     string
+	Title       string     // Release/title name
+	Link        string     // Download link (torrent/magnet/NZB)
+	Guid        string     // Unique identifier for this result
+	Category    Category   // Primary category
+	Categories  []Category // All matching categories
+	PublishDate time.Time  // When the release was published
+	Size        int64      // Size in bytes
+	Files       int        // Number of files in release
+	Grabs       int        // Number of times downloaded
+	Seeders     int        // Current seeder count (BitTorrent)
+	Leechers    int        // Current leecher count (BitTorrent)
+	InfoHash    string     // BitTorrent infohash (hex encoded)
+	MagnetURI   string     // Magnet URI for BitTorrent
+	TorrentURL  string     // Direct torrent file URL
+	NZBLink     string     // NZB download link (Usenet)
+	Quality     string     // Quality tag (720p, 1080p, etc.)
+	Codec       string     // Video codec (x264, x265, etc.)
+	Container   string     // Container format (mkv, mp4, etc.)
+	Resolution  string     // Resolution (1920x1080, etc.)
+	Group       string     // Release group name
+	Origin      string     // Origin/release source (scene, p2p, etc.)
+	Tags        []string   // Tags/labels attached to release
+	AnimeType   string     // Anime type (TV, movie, OVA, etc.)
+	Episode     string     // Episode identifier (S01E01)
+	Season      string     // Season identifier
+	MediaType   MediaType  // Internal media type
+	Indexer     string     // Which indexer returned this
+
+	// External ID fields for matching to library items
+	TMDBID int    // TMDB movie/TV ID
+	TVDBID int    // TVDB ID
+	IMDBID string // IMDB ID
+
+	Year        int  // Release year
+	Peers       int  // Total peers (seeders + leechers)
+	IsFreeleech bool // Free download (no ratio cost)
+	IsRepack    bool // Is a repack/update release
+	Priority    int  // Priority score for sorting
+	Score       int  // Match score for automation
 }
 
+// SearchCache caches search results to reduce indexer load.
+// Multiple identical searches return cached results within maxAge.
+type SearchCache struct {
+	mu      sync.RWMutex
+	entries map[string]cacheEntry
+	maxAge  time.Duration
+}
+
+type cacheEntry struct {
+	results []SearchResult
+	time    time.Time
+}
+
+// GlobalSearchCache is the default search cache with 5-minute TTL.
+// Used by the automation system to prevent duplicate searches.
+var GlobalSearchCache = NewSearchCache(5 * time.Minute)
+
+// NewSearchCache creates a cache with the specified TTL.
+func NewSearchCache(maxAge time.Duration) *SearchCache {
+	return &SearchCache{
+		entries: make(map[string]cacheEntry),
+		maxAge:  maxAge,
+	}
+}
+
+// Get retrieves cached results if still valid. Returns nil,false if
+// expired or not found. Returns a copy to prevent mutation.
+func (sc *SearchCache) Get(key string) ([]SearchResult, bool) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
+	entry, ok := sc.entries[key]
+	if !ok {
+		return nil, false
+	}
+
+	if time.Since(entry.time) > sc.maxAge {
+		return nil, false
+	}
+
+	// Return copy to prevent external mutation
+	results := make([]SearchResult, len(entry.results))
+	copy(results, entry.results)
+	return results, true
+}
+
+// Set stores search results with current timestamp.
+func (sc *SearchCache) Set(key string, results []SearchResult) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	sc.entries[key] = cacheEntry{
+		results: results,
+		time:    time.Now(),
+	}
+}
+
+// Clear removes all cached entries.
+func (sc *SearchCache) Clear() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.entries = make(map[string]cacheEntry)
+}
+
+// CleanOld removes entries older than maxAge.
+func (sc *SearchCache) CleanOld() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	cutoff := time.Now().Add(-sc.maxAge)
+	for key, entry := range sc.entries {
+		if entry.time.Before(cutoff) {
+			delete(sc.entries, key)
+		}
+	}
+}
+
+// Indexer defines the interface for indexer implementations.
+// Each indexer type (Torznab, Newznab, Jackett) implements this interface.
 type Indexer interface {
 	Name() string
 	GetCapabilities() IndexerCapability
@@ -92,39 +192,47 @@ type Indexer interface {
 	GetConfig() *IndexerConfig
 }
 
+// IndexerConfig contains configuration for an indexer instance.
 type IndexerConfig struct {
-	ID           uint32
-	Name         string
-	Type         IndexerType
-	URL          string
-	APIKey       string
-	Username     string
-	Password     string
-	Categories   []Category
-	Enabled      bool
-	LastTest     time.Time
-	LastResult   bool
-	RssUrl       string
-	DownloadPath string
+	ID           uint32      // Unique identifier
+	Name         string      // Display name
+	Type         IndexerType // Implementation type (torznab, newznab, etc.)
+	URL          string      // Base URL of the indexer
+	APIKey       string      // API key for authentication
+	Username     string      // Username (if required)
+	Password     string      // Password (if required)
+	Categories   []Category  // Categories to search
+	Enabled      bool        // Whether this indexer is active
+	LastTest     time.Time   // When last tested
+	LastResult   bool        // Result of last test
+	RssUrl       string      // RSS feed URL (if different from API URL)
+	DownloadPath string      // Default download path for results
 }
 
+// IndexerType specifies the implementation type of the indexer.
 type IndexerType string
 
 const (
-	IndexerTypeTorznab IndexerType = "torznab"
-	IndexerTypeNewznab IndexerType = "newznab"
-	IndexerTypeDirect  IndexerType = "direct"
-	IndexerTypeJackett IndexerType = "jackett"
+	IndexerTypeTorznab IndexerType = "torznab" // Torznab-compatible API
+	IndexerTypeNewznab IndexerType = "newznab" // Newznab-compatible API
+	IndexerTypeDirect  IndexerType = "direct"  // Direct/API access
+	IndexerTypeJackett IndexerType = "jackett" // Jackett aggregator
 )
 
+// IndexerFactory creates indexer instances from configuration.
+// New indexer types should register a factory during init().
 type IndexerFactory func(config *IndexerConfig) (Indexer, error)
 
+// registry holds all registered indexer factories.
 var registry = make(map[IndexerType]IndexerFactory)
 
+// Register adds an indexer factory to the global registry.
+// Call from init() in each indexer implementation.
 func Register(idxType IndexerType, factory IndexerFactory) {
 	registry[idxType] = factory
 }
 
+// CreateIndexer instantiates an indexer from configuration.
 func CreateIndexer(config *IndexerConfig) (Indexer, error) {
 	factory, ok := registry[config.Type]
 	if !ok {
@@ -133,6 +241,7 @@ func CreateIndexer(config *IndexerConfig) (Indexer, error) {
 	return factory(config)
 }
 
+// IndexerError represents indexer-specific errors.
 type IndexerError string
 
 func (e IndexerError) Error() string { return string(e) }
@@ -145,6 +254,8 @@ const (
 	ErrNotSupported       IndexerError = "operation not supported"
 )
 
+// ParseCategory converts string category names to Category values.
+// Accepts common variations (e.g., "tv", "tvshow", "tvshows").
 func ParseCategory(catStr string) Category {
 	switch catStr {
 	case "movie", "movies":
@@ -170,6 +281,8 @@ func ParseCategory(catStr string) Category {
 	}
 }
 
+// MapCategoryToTorznab converts internal categories to Torznab category IDs.
+// Each media type maps to multiple Torznab IDs for different subcategories.
 func MapCategoryToTorznab(cat Category) []string {
 	switch cat {
 	case CategoryMovie:
@@ -193,6 +306,7 @@ func MapCategoryToTorznab(cat Category) []string {
 	}
 }
 
+// MapTorznabToCategory converts Torznab category IDs back to internal categories.
 func MapTorznabToCategory(catStr string) Category {
 	switch catStr {
 	case "2000", "2010", "2020", "2030", "2040", "2050", "2060":

@@ -9,8 +9,6 @@ import (
 	"sync"
 
 	"github.com/yay101/mediarr/internal/db"
-	"github.com/yay101/mediarr/internal/storage/local"
-	"github.com/yay101/mediarr/internal/storage/s3"
 )
 
 type StorageBackend interface {
@@ -179,21 +177,7 @@ func (m *Manager) loadPreferences(ctx context.Context) error {
 }
 
 func (m *Manager) createBackend(loc *db.StorageLocation) (StorageBackend, error) {
-	switch loc.Type {
-	case "local":
-		return local.New(loc.Path), nil
-	case "s3":
-		return s3.New(s3.Options{
-			Bucket:         loc.Bucket,
-			Region:         loc.Region,
-			Endpoint:       loc.Endpoint,
-			AccessKey:      loc.AccessKey,
-			SecretKey:      loc.SecretKey,
-			ForcePathStyle: loc.ForcePathStyle,
-		})
-	default:
-		return nil, fmt.Errorf("unknown storage type: %s", loc.Type)
-	}
+	return Create(loc)
 }
 
 func (m *Manager) GetLocation(id uint32) (*db.StorageLocation, bool) {

@@ -1,0 +1,43 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+database:
+  path: ./mediarr.db
+
+download:
+  path: ./downloads
+  temp_path: ./temp
+  torrent:
+    port: 6881
+
+library:
+  movies:
+    - path: /testbucket/movies
+      type: s3
+      bucket: mediarr
+      region: ap-southeast-2
+      endpoint: https://s3.ap-southeast-2.onidel.cloud
+      access_key: 9ALFVZ508A12B68WFSWT
+      secret_key: MXKV5NYLzIHZlzAwbFPdYuJC3OVC2OmrgbJ2HvM7
+      force_path_style: true
+      priority: 10
+  tv:
+    - path: /testbucket/tv
+      type: s3
+      bucket: mediarr
+      region: ap-southeast-2
+      endpoint: https://s3.ap-southeast-2.onidel.cloud
+      access_key: 9ALFVZ508A12B68WFSWT
+      secret_key: MXKV5NYLzIHZlzAwbFPdYuJC3OVC2OmrgbJ2HvM7
+      force_path_style: true
+      priority: 10
+
+auth:
+  defaults:
+    admin:
+      username: admin
+      password: admin
+
+metadata_api:
+  url: http://localhost:8081

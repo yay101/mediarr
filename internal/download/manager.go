@@ -48,19 +48,21 @@ func NewManager(cfg Config, database *db.Database) (*Manager, error) {
 	}
 
 	if cfg.DataDir != "" {
-		torrentCfg := torrent.Config{
-			ListenPort:         cfg.ListenPort,
-			DataDir:            cfg.DataDir,
-			DownloadDir:        cfg.DownloadDir,
-			MaxConnections:     cfg.MaxConnections,
-			MaxPeersPerTorrent: cfg.MaxPeersPerTorrent,
+		torrentCfg := torrent.ClientConfig{
+			DownloadDir: cfg.DownloadDir,
+			Port:        cfg.ListenPort,
+			MaxPeers:    cfg.MaxPeersPerTorrent,
 		}
 
 		tc, err := torrent.NewClient(torrentCfg)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create torrent client: %w", err)
+			log.Printf("Warning: failed to create torrent client: %v", err)
+		} else {
+			m.torrentClient = tc
+			if err := tc.Start(); err != nil {
+				log.Printf("Warning: failed to start torrent client: %v", err)
+			}
 		}
-		m.torrentClient = tc
 	}
 
 	if len(cfg.UsenetServers) > 0 {

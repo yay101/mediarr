@@ -62,7 +62,12 @@ func NewClient(cfg ServerConfig) *Client {
 }
 
 func (c *Client) Connect() error {
-	address := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
+	var address string
+	if net.ParseIP(c.config.Host) != nil {
+		address = fmt.Sprintf("[%s]:%d", c.config.Host, c.config.Port)
+	} else {
+		address = fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
+	}
 
 	var conn net.Conn
 	var err error

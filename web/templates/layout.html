@@ -721,7 +721,7 @@
             resultsDiv.innerHTML = 'Searching...';
             
             try {
-                const res = await fetch('/api/v1/search?q=' + encodeURIComponent(q));
+                const res = await fetch('/api/v1/search/metadata?q=' + encodeURIComponent(q));
                 const data = await res.json();
                 
                 let html = '';
@@ -915,7 +915,7 @@
             }
             
             try {
-                const res = await fetch('/api/v1/search/manual/download', {
+                const res = await fetch('/api/v1/search/ws-session/download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1007,7 +1007,7 @@
             }
             
             try {
-                const res = await fetch(`/api/v1/search/manual/${sessionId}/download`, {
+                const res = await fetch(`/api/v1/search/${sessionId}/download`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1036,7 +1036,7 @@
         
         window.clearSearchSession = async (sessionId) => {
             try {
-                await fetch(`/api/v1/search/manual/${sessionId}`, { method: 'DELETE' });
+                await fetch(`/api/v1/search/${sessionId}`, { method: 'DELETE' });
                 document.getElementById('search-results').innerHTML = '<p>Search cleared.</p>';
             } catch (err) {
                 console.error('Failed to clear search session:', err);
@@ -1281,7 +1281,7 @@
             const resultDiv = document.getElementById('action-result');
             resultDiv.innerHTML = 'Reloading...';
             try {
-                const res = await fetch('/api/v1/reload', { method: 'POST' });
+                const res = await fetch('/api/v1/config/reload', { method: 'POST' });
                 const data = await res.json();
                 resultDiv.innerHTML = 'Config reloaded: ' + data.status;
             } catch(e) {

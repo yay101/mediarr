@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 
 	"github.com/yay101/mediarr/internal/db"
@@ -46,16 +48,18 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
-	// 1. Try session cookie
-	cookie, err := r.Cookie("mediarr_session")
-	if err == nil {
-		// Use the value to find user in db
-		// For now, I'll use a simplified mapping
+	// 1. Try API Key header
+	apiKey := r.Header.Get("X-API-Key")
+	if apiKey == "" {
+		apiKey = r.URL.Query().Get("api_key")
+	}
+
+	if apiKey != "" {
 		database := s.app.DB()
 		if database != nil {
 			table, _ := database.Users()
 			users, _ := table.Filter(func(u db.User) bool {
-				return u.Username == cookie.Value // In reality, use a session token mapping
+				return u.APIKey == apiKey
 			})
 			if len(users) > 0 {
 				return &users[0], nil
@@ -63,11 +67,29 @@ func (s *Server) getCurrentUser(r *http.Request) (*db.User, error) {
 		}
 	}
 
-	// 2. Fallback to default admin if disabled auth (for dev)
+	// 2. Try session cookie
+	cookie, err := r.Cookie("mediarr_session")
+	if err == nil {
+		database := s.app.DB()
+		if database != nil {
+			table, _ := database.Users()
+			// The cookie value now contains the API Key for persistent sessions
+			users, _ := table.Filter(func(u db.User) bool {
+				return u.APIKey == cookie.Value
+			})
+			if len(users) > 0 {
+				return &users[0], nil
+			}
+		}
+	}
+
+	// 3. Fallback to default admin if disabled auth (for dev)
 	cfg := s.app.Config()
 	if !cfg.Auth.OIDC.Enabled {
 		return &db.User{
+			ID:       1,
 			Username: cfg.Auth.Defaults.Admin.Username,
+			APIKey:   "dev_admin_key",
 			Role:     db.RoleAdmin,
 		}, nil
 	}
@@ -99,6 +121,7 @@ func (s *Server) handleOIDCCallback(accesstoken *string, refreshtoken *string, e
 		user = &db.User{
 			Username:    idtoken.Email,
 			OIDCSubject: idtoken.Subject,
+			APIKey:      generateAPIKey(),
 			Role:        db.RoleUser,
 		}
 		// If it's the first user, make them admin? Or use config.
@@ -109,14 +132,23 @@ func (s *Server) handleOIDCCallback(accesstoken *string, refreshtoken *string, e
 	// Create session cookie
 	cookie := &http.Cookie{
 		Name:     "mediarr_session",
-		Value:    user.Username, // Simple for now
+		Value:    user.APIKey,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   false,      // Set to false for local dev compatibility, or use r.TLS != nil
+		MaxAge:   86400 * 30, // 30 days
 		SameSite: http.SameSiteLaxMode,
 	}
 
 	return true, cookie
+}
+
+func generateAPIKey() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }
 
 func currentUser(r *http.Request) *db.User {
