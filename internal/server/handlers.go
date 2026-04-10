@@ -1425,19 +1425,80 @@ func (s *Server) handleStreamFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.app.Config()
+
+	library := map[string]interface{}{}
+	if len(cfg.Library.Movies) > 0 {
+		library["movies"] = cfg.Library.Movies
+	}
+	if len(cfg.Library.TV) > 0 {
+		library["tv"] = cfg.Library.TV
+	}
+	if len(cfg.Library.Music) > 0 {
+		library["music"] = cfg.Library.Music
+	}
+	if len(cfg.Library.Books) > 0 {
+		library["books"] = cfg.Library.Books
+	}
+
+	downloadCfg := map[string]interface{}{
+		"path":      cfg.Download.Path,
+		"temp_path": cfg.Download.TempPath,
+		"torrent": map[string]interface{}{
+			"port":                  cfg.Download.Torrent.Port,
+			"max_connections":       cfg.Download.Torrent.MaxConnections,
+			"max_peers_per_torrent": cfg.Download.Torrent.MaxPeersPerTorrent,
+			"upload_rate_limit":     cfg.Download.Torrent.UploadRateLimit,
+			"download_rate_limit":   cfg.Download.Torrent.DownloadRateLimit,
+		},
+	}
+
+	if len(cfg.Download.Usenet.Servers) > 0 {
+		downloadCfg["usenet"] = map[string]interface{}{
+			"connections": cfg.Download.Usenet.Connections,
+			"servers":     cfg.Download.Usenet.Servers,
+		}
+	}
+
+	tlsCfg := map[string]interface{}{
+		"enabled":        cfg.TLS.Enabled,
+		"domain":         cfg.TLS.Domain,
+		"challenge_port": cfg.TLS.ChallengePort,
+	}
+
+	authCfg := map[string]interface{}{
+		"oidc_enabled": cfg.Auth.OIDC.Enabled,
+	}
+	if len(cfg.Auth.OIDC.Providers) > 0 {
+		providers := make([]map[string]string, len(cfg.Auth.OIDC.Providers))
+		for i, p := range cfg.Auth.OIDC.Providers {
+			providers[i] = map[string]string{
+				"id":   p.ID,
+				"name": p.Name,
+			}
+		}
+		authCfg["providers"] = providers
+	}
+
+	metadataAPI := map[string]interface{}{
+		"url":     cfg.MetadataAPI.URL,
+		"api_key": cfg.MetadataAPI.APIKey,
+		"timeout": cfg.MetadataAPI.Timeout.String(),
+	}
+
 	settings := map[string]interface{}{
 		"server": map[string]interface{}{
 			"host": cfg.Server.Host,
 			"port": cfg.Server.Port,
 			"url":  cfg.Server.URL,
 		},
-		"download": map[string]interface{}{
-			"path":      cfg.Download.Path,
-			"temp_path": cfg.Download.TempPath,
+		"database": map[string]interface{}{
+			"path": cfg.Database.Path,
 		},
-		"auth": map[string]interface{}{
-			"oidc_enabled": cfg.Auth.OIDC.Enabled,
-		},
+		"download":     downloadCfg,
+		"library":      library,
+		"tls":          tlsCfg,
+		"auth":         authCfg,
+		"metadata_api": metadataAPI,
 	}
 	writeJSON(w, settings)
 }
