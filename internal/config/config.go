@@ -20,8 +20,22 @@ type Config struct {
 }
 
 type LibraryConfig struct {
-	Movies string `yaml:"movies"`
-	TV     string `yaml:"tv"`
+	Movies []StorageLocationConfig `yaml:"movies"`
+	TV     []StorageLocationConfig `yaml:"tv"`
+	Music  []StorageLocationConfig `yaml:"music"`
+	Books  []StorageLocationConfig `yaml:"books"`
+}
+
+type StorageLocationConfig struct {
+	Path           string `yaml:"path"`
+	Type           string `yaml:"type"`
+	Bucket         string `yaml:"bucket"`
+	Region         string `yaml:"region"`
+	Endpoint       string `yaml:"endpoint"`
+	AccessKey      string `yaml:"access_key"`
+	SecretKey      string `yaml:"secret_key"`
+	ForcePathStyle bool   `yaml:"force_path_style"`
+	Priority       int    `yaml:"priority"`
 }
 
 type ServerConfig struct {
@@ -55,6 +69,7 @@ type DownloadConfig struct {
 	Torrent  TorrentConfig  `yaml:"torrent"`
 	Usenet   UsenetConfig   `yaml:"usenet"`
 	Indexers IndexersConfig `yaml:"indexers"`
+	Trackers TrackersConfig `yaml:"trackers"`
 }
 
 type TorrentConfig struct {
@@ -89,6 +104,23 @@ type IndexerConfig struct {
 	Type     string            `yaml:"type"`
 	URL      string            `yaml:"url"`
 	APIKey   string            `yaml:"api_key"`
+	Settings map[string]string `yaml:"settings"`
+}
+
+type TrackersConfig struct {
+	Enabled bool            `yaml:"enabled"`
+	List    []TrackerConfig `yaml:"list"`
+}
+
+type TrackerConfig struct {
+	Name     string            `yaml:"name"`
+	Enabled  bool              `yaml:"enabled"`
+	Type     string            `yaml:"type"`
+	URL      string            `yaml:"url"`
+	Username string            `yaml:"username"`
+	Password string            `yaml:"password"`
+	APIKey   string            `yaml:"api_key"`
+	PassKey  string            `yaml:"passkey"`
 	Settings map[string]string `yaml:"settings"`
 }
 
@@ -199,11 +231,17 @@ func Load() (*Config, error) {
 	if cfg.Download.Path == "" {
 		cfg.Download.Path = defaultDownloadsPath()
 	}
-	if cfg.Library.Movies == "" {
-		cfg.Library.Movies = filepath.Join(filepath.Dir(cfg.Download.Path), "movies")
+	if len(cfg.Library.Movies) == 0 {
+		defaultPath := filepath.Join(filepath.Dir(cfg.Download.Path), "movies")
+		cfg.Library.Movies = []StorageLocationConfig{
+			{Path: defaultPath, Type: "local", Priority: 10},
+		}
 	}
-	if cfg.Library.TV == "" {
-		cfg.Library.TV = filepath.Join(filepath.Dir(cfg.Download.Path), "tv")
+	if len(cfg.Library.TV) == 0 {
+		defaultPath := filepath.Join(filepath.Dir(cfg.Download.Path), "tv")
+		cfg.Library.TV = []StorageLocationConfig{
+			{Path: defaultPath, Type: "local", Priority: 10},
+		}
 	}
 	if cfg.Download.TempPath == "" {
 		cfg.Download.TempPath = filepath.Join(filepath.Dir(cfg.Database.Path), "temp")
@@ -246,6 +284,10 @@ func defaultConfig() *Config {
 			Usenet: UsenetConfig{
 				Connections: 4,
 			},
+		},
+		Library: LibraryConfig{
+			Movies: []StorageLocationConfig{},
+			TV:     []StorageLocationConfig{},
 		},
 		TLS: TLSConfig{
 			Enabled: false,

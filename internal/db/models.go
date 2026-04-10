@@ -10,6 +10,7 @@ const (
 	MediaTypeMusic
 	MediaTypeBook
 	MediaTypeManga
+	MediaTypeAudiobook
 )
 
 type MediaStatus uint8
@@ -156,121 +157,160 @@ type MangaMetadata struct {
 }
 
 type Movie struct {
-	ID        uint32      `db:"id,primary"`
-	UserID    uint32      `db:"index"`
-	Title     string      `db:"index"`
-	Year      uint16      `db:"index"`
-	TMDBID    uint32      `db:"index"`
-	IMDBID    string      `db:"index"`
-	Status    MediaStatus `db:"index"`
-	Path      string
-	Size      uint64
-	Quality   string
-	Metadata  MovieMetadata `db:"index"`
-	AddedAt   time.Time     `db:"index"`
-	UpdatedAt time.Time
+	ID                uint32      `db:"id,primary"`
+	UserID            uint32      `db:"index"`
+	Title             string      `db:"index"`
+	Year              uint16      `db:"index"`
+	TMDBID            uint32      `db:"index"`
+	IMDBID            string      `db:"index"`
+	Status            MediaStatus `db:"index"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	Quality           string
+	Metadata          MovieMetadata `db:"index"`
+	AddedAt           time.Time     `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type TVShow struct {
-	ID        uint32      `db:"id,primary"`
-	UserID    uint32      `db:"index"`
-	Title     string      `db:"index"`
-	Year      uint16      `db:"index"`
-	TMDBID    uint32      `db:"index"`
-	Status    MediaStatus `db:"index"`
-	Monitored bool        `db:"index"`
-	Path      string
-	Metadata  TVShowMetadata `db:"index"`
-	AddedAt   time.Time      `db:"index"`
-	UpdatedAt time.Time
+	ID                uint32      `db:"id,primary"`
+	UserID            uint32      `db:"index"`
+	Title             string      `db:"index"`
+	Year              uint16      `db:"index"`
+	TMDBID            uint32      `db:"index"`
+	Status            MediaStatus `db:"index"`
+	Monitored         bool        `db:"index"`
+	Path              string
+	StorageLocationID uint32         `db:"index"`
+	Metadata          TVShowMetadata `db:"index"`
+	AddedAt           time.Time      `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type TVEpisode struct {
-	ID        uint32 `db:"id,primary"`
-	ShowID    uint32 `db:"index"`
-	Season    uint32 `db:"index"`
-	Episode   uint32 `db:"index"`
-	Title     string
-	TMDBID    uint32      `db:"index,unique"`
-	Status    MediaStatus `db:"index"`
-	Monitored bool        `db:"index"`
-	Path      string
-	Size      uint64
-	Metadata  TVEpisodeMetadata `db:"index"`
-	AirDate   time.Time
-	AddedAt   time.Time `db:"index"`
-	UpdatedAt time.Time
+	ID                uint32 `db:"id,primary"`
+	ShowID            uint32 `db:"index"`
+	Season            uint32 `db:"index"`
+	Episode           uint32 `db:"index"`
+	Title             string
+	TMDBID            uint32      `db:"index,unique"`
+	Status            MediaStatus `db:"index"`
+	Monitored         bool        `db:"index"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	Metadata          TVEpisodeMetadata `db:"index"`
+	AirDate           time.Time
+	AddedAt           time.Time `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type MusicAlbum struct {
-	ID            uint32      `db:"id,primary"`
-	Title         string      `db:"index"`
-	Artist        string      `db:"index"`
-	Year          uint16      `db:"index"`
-	MusicBrainzID string      `db:"index,unique"`
-	Status        MediaStatus `db:"index"`
-	Path          string
-	Size          uint64
-	Metadata      MusicAlbumMetadata `db:"index"`
-	AddedAt       time.Time          `db:"index"`
-	UpdatedAt     time.Time
+	ID                uint32      `db:"id,primary"`
+	Title             string      `db:"index"`
+	Artist            string      `db:"index"`
+	Year              uint16      `db:"index"`
+	MusicBrainzID     string      `db:"index,unique"`
+	Status            MediaStatus `db:"index"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	Metadata          MusicAlbumMetadata `db:"index"`
+	AddedAt           time.Time          `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type MusicTrack struct {
-	ID            uint32 `db:"id,primary"`
-	AlbumID       uint32 `db:"index"`
-	Title         string `db:"index"`
-	TrackNum      uint32
-	Duration      uint32
-	MusicBrainzID string `db:"index,unique"`
-	Path          string
-	Size          uint64
-	AddedAt       time.Time `db:"index"`
-	UpdatedAt     time.Time
+	ID                uint32 `db:"id,primary"`
+	AlbumID           uint32 `db:"index"`
+	Title             string `db:"index"`
+	TrackNum          uint32
+	Duration          uint32
+	MusicBrainzID     string `db:"index,unique"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	AddedAt           time.Time `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type Book struct {
-	ID            uint32      `db:"id,primary"`
-	Title         string      `db:"index"`
-	Author        string      `db:"index"`
-	Year          uint16      `db:"index"`
-	ISBN          string      `db:"index,unique"`
-	OpenLibraryID string      `db:"index,unique"`
-	Status        MediaStatus `db:"index"`
-	Path          string
-	Size          uint64
-	Metadata      BookMetadata `db:"index"`
-	AddedAt       time.Time    `db:"index"`
-	UpdatedAt     time.Time
+	ID                uint32      `db:"id,primary"`
+	Title             string      `db:"index"`
+	Author            string      `db:"index"`
+	Year              uint16      `db:"index"`
+	ISBN              string      `db:"index,unique"`
+	OpenLibraryID     string      `db:"index,unique"`
+	Status            MediaStatus `db:"index"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	Metadata          BookMetadata `db:"index"`
+	AddedAt           time.Time    `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type Manga struct {
-	ID         uint32      `db:"id,primary"`
-	Title      string      `db:"index"`
-	Year       uint16      `db:"index"`
-	MangaDexID string      `db:"index,unique"`
-	Status     MediaStatus `db:"index"`
-	Path       string
-	Metadata   MangaMetadata `db:"index"`
-	AddedAt    time.Time     `db:"index"`
-	UpdatedAt  time.Time
+	ID                uint32      `db:"id,primary"`
+	Title             string      `db:"index"`
+	Year              uint16      `db:"index"`
+	MangaDexID        string      `db:"index,unique"`
+	Status            MediaStatus `db:"index"`
+	Path              string
+	StorageLocationID uint32        `db:"index"`
+	Metadata          MangaMetadata `db:"index"`
+	AddedAt           time.Time     `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type MangaChapter struct {
-	ID          uint32 `db:"id,primary"`
-	MangaID     uint32 `db:"index"`
-	Chapter     uint32 `db:"index"`
-	Volume      uint32
-	Title       string
-	MangaDexID  uint32      `db:"index,unique"`
-	Language    string      `db:"index"`
-	Status      MediaStatus `db:"index"`
-	Path        string
-	Size        uint64
-	Group       string
-	ReleaseDate time.Time
-	AddedAt     time.Time `db:"index"`
-	UpdatedAt   time.Time
+	ID                uint32 `db:"id,primary"`
+	MangaID           uint32 `db:"index"`
+	Chapter           uint32 `db:"index"`
+	Volume            uint32
+	Title             string
+	MangaDexID        uint32      `db:"index,unique"`
+	Language          string      `db:"index"`
+	Status            MediaStatus `db:"index"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	Group             string
+	ReleaseDate       time.Time
+	AddedAt           time.Time `db:"index"`
+	UpdatedAt         time.Time
+}
+
+type AudiobookMetadata struct {
+	Overview    string     `json:"overview"`
+	Cover       ImageInfo  `json:"cover"`
+	Rating      RatingInfo `json:"rating"`
+	Genres      []string   `json:"genres"`
+	Authors     []string   `json:"authors"`
+	Narrators   []string   `json:"narrators"`
+	Publisher   string     `json:"publisher"`
+	PublishDate string     `json:"publish_date"`
+	Duration    int        `json:"duration"` // seconds
+	Language    string     `json:"language"`
+	AudibleID   string     `json:"audible_id"`
+	ISBN        string     `json:"isbn"`
+}
+
+type Audiobook struct {
+	ID                uint32      `db:"id,primary"`
+	UserID            uint32      `db:"index"`
+	Title             string      `db:"index"`
+	Author            string      `db:"index"`
+	Year              uint16      `db:"index"`
+	ASIN              string      `db:"index,unique"`
+	Status            MediaStatus `db:"index"`
+	Path              string
+	StorageLocationID uint32 `db:"index"`
+	Size              uint64
+	Metadata          AudiobookMetadata `db:"index"`
+	AddedAt           time.Time         `db:"index"`
+	UpdatedAt         time.Time
 }
 
 type DownloadJob struct {
@@ -302,6 +342,7 @@ type User struct {
 	Username     string `db:"index,unique"`
 	PasswordHash string
 	OIDCSubject  string `db:"index,unique"`
+	APIKey       string `db:"index,unique"`
 	Role         UserRole
 	CreatedAt    time.Time
 }
@@ -375,4 +416,63 @@ type QualityProfile struct {
 	MaxSize       int64
 	CreatedAt     time.Time `db:"index"`
 	UpdatedAt     time.Time
+}
+
+type StorageLocation struct {
+	ID             uint32    `db:"id,primary"`
+	MediaType      MediaType `db:"index"`
+	Name           string    `db:"index"`
+	Type           string    `db:"index"`
+	Path           string
+	Bucket         string
+	Region         string
+	Endpoint       string
+	AccessKey      string
+	SecretKey      string
+	ForcePathStyle bool
+	Priority       int
+	IsDefault      bool
+	CreatedAt      time.Time `db:"index"`
+	UpdatedAt      time.Time
+}
+
+type StoragePreference struct {
+	ID          uint32    `db:"id,primary"`
+	MediaType   MediaType `db:"index,unique"`
+	StorageID   uint32    `db:"index"`
+	UseAutoPick bool
+	UpdatedAt   time.Time
+}
+
+type TrackerConfigDB struct {
+	ID           uint32 `db:"id,primary"`
+	Name         string `db:"index"`
+	Type         string `db:"index"`
+	URL          string
+	Username     string
+	Password     string
+	APIKey       string
+	PassKey      string
+	Cookie       string
+	CookieExpiry time.Time
+	AuthToken    string
+	Settings     string
+	Enabled      bool `db:"index"`
+	LastAuth     time.Time
+	LastResult   bool
+	CreatedAt    time.Time `db:"index"`
+	UpdatedAt    time.Time
+}
+
+type TorrentStats struct {
+	ID          uint32 `db:"id,primary"`
+	InfoHash    string `db:"index"`
+	TrackerID   uint32 `db:"index"`
+	Uploaded    int64
+	Downloaded  int64
+	SeedTime    int64
+	TimesWarned int32
+	IsSeeding   bool      `db:"index"`
+	AddedAt     time.Time `db:"index"`
+	UpdatedAt   time.Time
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/yay101/mediarr/internal/auth"
 	"github.com/yay101/mediarr/internal/config"
 	"github.com/yay101/mediarr/internal/db"
+	"github.com/yay101/mediarr/internal/download"
+	"github.com/yay101/mediarr/internal/search"
 	"github.com/yay101/mediarr/internal/tasks"
 )
 
@@ -30,6 +32,10 @@ type App struct {
 	Tasks      func() *tasks.Manager
 	Automation func() interface{}
 	Subtitles  func() interface{}
+	Search     func() *search.Manager
+	SearchHub  func() *search.Hub
+	Download   func() *download.Manager
+	Storage    func() interface{}
 	Stopped    func() <-chan struct{}
 }
 
@@ -104,6 +110,13 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/search", s.authMiddleware(s.handleSearch))
 	s.mux.HandleFunc("POST /api/v1/search/{type}/{id}", s.authMiddleware(s.handleTriggerSearch))
 
+	s.mux.HandleFunc("POST /api/v1/search/manual", s.authMiddleware(s.handleManualSearch))
+	s.mux.HandleFunc("GET /api/v1/search/manual/{session_id}", s.authMiddleware(s.handleGetSearchResults))
+	s.mux.HandleFunc("POST /api/v1/search/manual/{session_id}/download", s.authMiddleware(s.handleDownloadSearchResult))
+	s.mux.HandleFunc("DELETE /api/v1/search/manual/{session_id}", s.authMiddleware(s.handleClearSearchSession))
+
+	s.mux.HandleFunc("GET /ws/search", s.authMiddleware(s.handleSearchWebSocket))
+
 	s.mux.HandleFunc("GET /api/v1/rss", s.adminMiddleware(s.handleListRSSFeeds))
 	s.mux.HandleFunc("POST /api/v1/rss", s.adminMiddleware(s.handleAddRSSFeed))
 	s.mux.HandleFunc("DELETE /api/v1/rss/{id}", s.adminMiddleware(s.handleRemoveRSSFeed))
@@ -127,6 +140,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tasks", s.adminMiddleware(s.handleListTasks))
 	s.mux.HandleFunc("DELETE /api/v1/tasks/{id}", s.adminMiddleware(s.handleKillTask))
 	s.mux.HandleFunc("POST /api/v1/reload", s.adminMiddleware(s.handleReloadConfig))
+	s.mux.HandleFunc("POST /api/v1/media/verify", s.adminMiddleware(s.handleVerifyMedia))
 
 	// Frontend routes (SPA)
 	frontendRoutes := []string{

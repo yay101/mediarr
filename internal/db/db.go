@@ -14,21 +14,24 @@ type Database struct {
 
 	core *embeddb.DB
 
-	movies          *embeddb.Table[Movie]
-	tvshows         *embeddb.Table[TVShow]
-	tvepisodes      *embeddb.Table[TVEpisode]
-	musicalbums     *embeddb.Table[MusicAlbum]
-	musictracks     *embeddb.Table[MusicTrack]
-	books           *embeddb.Table[Book]
-	manga           *embeddb.Table[Manga]
-	mangachapters   *embeddb.Table[MangaChapter]
-	downloads       *embeddb.Table[DownloadJob]
-	users           *embeddb.Table[User]
-	settings        *embeddb.Table[Setting]
-	rssfeeds        *embeddb.Table[RSSFeed]
-	watchlist       *embeddb.Table[WatchlistItem]
-	qualityprofiles *embeddb.Table[QualityProfile]
-	indexerconfigs  *embeddb.Table[IndexerConfig]
+	movies             *embeddb.Table[Movie]
+	tvshows            *embeddb.Table[TVShow]
+	tvepisodes         *embeddb.Table[TVEpisode]
+	musicalbums        *embeddb.Table[MusicAlbum]
+	musictracks        *embeddb.Table[MusicTrack]
+	books              *embeddb.Table[Book]
+	audiobooks         *embeddb.Table[Audiobook]
+	manga              *embeddb.Table[Manga]
+	mangachapters      *embeddb.Table[MangaChapter]
+	downloads          *embeddb.Table[DownloadJob]
+	users              *embeddb.Table[User]
+	settings           *embeddb.Table[Setting]
+	rssfeeds           *embeddb.Table[RSSFeed]
+	watchlist          *embeddb.Table[WatchlistItem]
+	qualityprofiles    *embeddb.Table[QualityProfile]
+	indexerconfigs     *embeddb.Table[IndexerConfig]
+	storagelocations   *embeddb.Table[StorageLocation]
+	storagepreferences *embeddb.Table[StoragePreference]
 }
 
 func New(path string) (*Database, error) {
@@ -220,6 +223,33 @@ func (d *Database) getBooks() (*embeddb.Table[Book], error) {
 		return nil, err
 	}
 	d.books = table
+	return table, nil
+}
+
+func (d *Database) getAudiobooks() (*embeddb.Table[Audiobook], error) {
+	d.mu.RLock()
+	table := d.audiobooks
+	d.mu.RUnlock()
+	if table != nil {
+		return table, nil
+	}
+
+	core, err := d.getCore()
+	if err != nil {
+		return nil, err
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.audiobooks != nil {
+		return d.audiobooks, nil
+	}
+
+	table, err = embeddb.Use[Audiobook](core, "audiobooks")
+	if err != nil {
+		return nil, err
+	}
+	d.audiobooks = table
 	return table, nil
 }
 
@@ -476,6 +506,7 @@ func (d *Database) Close() error {
 	d.musicalbums = nil
 	d.musictracks = nil
 	d.books = nil
+	d.audiobooks = nil
 	d.manga = nil
 	d.mangachapters = nil
 	d.downloads = nil
@@ -485,6 +516,8 @@ func (d *Database) Close() error {
 	d.watchlist = nil
 	d.qualityprofiles = nil
 	d.indexerconfigs = nil
+	d.storagelocations = nil
+	d.storagepreferences = nil
 	d.mu.Unlock()
 
 	if core == nil {
@@ -515,6 +548,10 @@ func (d *Database) MusicTracks() (*embeddb.Table[MusicTrack], error) {
 
 func (d *Database) Books() (*embeddb.Table[Book], error) {
 	return d.getBooks()
+}
+
+func (d *Database) Audiobooks() (*embeddb.Table[Audiobook], error) {
+	return d.getAudiobooks()
 }
 
 func (d *Database) Manga() (*embeddb.Table[Manga], error) {
@@ -551,4 +588,66 @@ func (d *Database) QualityProfiles() (*embeddb.Table[QualityProfile], error) {
 
 func (d *Database) IndexerConfigs() (*embeddb.Table[IndexerConfig], error) {
 	return d.getIndexerConfigs()
+}
+
+func (d *Database) getStorageLocations() (*embeddb.Table[StorageLocation], error) {
+	d.mu.RLock()
+	table := d.storagelocations
+	d.mu.RUnlock()
+	if table != nil {
+		return table, nil
+	}
+
+	core, err := d.getCore()
+	if err != nil {
+		return nil, err
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.storagelocations != nil {
+		return d.storagelocations, nil
+	}
+
+	table, err = embeddb.Use[StorageLocation](core, "storage_locations")
+	if err != nil {
+		return nil, err
+	}
+	d.storagelocations = table
+	return table, nil
+}
+
+func (d *Database) getStoragePreferences() (*embeddb.Table[StoragePreference], error) {
+	d.mu.RLock()
+	table := d.storagepreferences
+	d.mu.RUnlock()
+	if table != nil {
+		return table, nil
+	}
+
+	core, err := d.getCore()
+	if err != nil {
+		return nil, err
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.storagepreferences != nil {
+		return d.storagepreferences, nil
+	}
+
+	table, err = embeddb.Use[StoragePreference](core, "storage_preferences")
+	if err != nil {
+		return nil, err
+	}
+	d.storagepreferences = table
+	return table, nil
+}
+
+func (d *Database) StorageLocations() (*embeddb.Table[StorageLocation], error) {
+	return d.getStorageLocations()
+}
+
+func (d *Database) StoragePreferences() (*embeddb.Table[StoragePreference], error) {
+	return d.getStoragePreferences()
 }

@@ -13,27 +13,87 @@ import (
 	"github.com/yay101/mediarr/internal/indexer"
 	"github.com/yay101/mediarr/internal/monitor"
 	"github.com/yay101/mediarr/internal/rss"
+	"github.com/yay101/mediarr/internal/storage"
 )
 
+// Manager orchestrates automated content discovery and download.
+// It monitors RSS feeds, searches indexers for wanted content,
+// and queues downloads for processing by the download worker.
 type Manager struct {
 	db              *db.Database
 	rssClient       *rss.Client
 	downloadManager *download.Manager
 	monitor         *monitor.Monitor
 	indexerManager  *IndexerManager
+	searchCache     *SearchDeduplicator
+	storageManager  *storage.Manager
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
+// IndexerManager manages registered indexer instances for searching.
 type IndexerManager struct {
 	db       *db.Database
 	indexers map[uint32]indexer.Indexer
 	mu       sync.RWMutex
 }
 
-func NewManager(database *db.Database, rssClient *rss.Client, dlMgr *download.Manager, mon *monitor.Monitor) *Manager {
+// SearchDeduplicator prevents duplicate searches for the same content.
+// Tracks recent searches and skips duplicates within a configurable window.
+// This prevents hammering indexers with identical queries.
+type SearchDeduplicator struct {
+	mu       sync.RWMutex
+	searches map[string]time.Time // Key: search query hash, Value: last search time
+	maxAge   time.Duration        // How long to remember searches
+}
+
+// NewSearchDeduplicator creates a deduplicator with the specified memory window.
+func NewSearchDeduplicator(maxAge time.Duration) *SearchDeduplicator {
+	return &SearchDeduplicator{
+		searches: make(map[string]time.Time),
+		maxAge:   maxAge,
+	}
+}
+
+// ShouldSearch checks if a search should proceed or be skipped as duplicate.
+// Returns true if the search should proceed, false if it was recently searched.
+func (sd *SearchDeduplicator) ShouldSearch(key string) bool {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	if lastSearch, exists := sd.searches[key]; exists {
+		if time.Since(lastSearch) < sd.maxAge {
+			return false
+		}
+	}
+	sd.searches[key] = time.Now()
+	return true
+}
+
+// Clear removes all tracked searches.
+func (sd *SearchDeduplicator) Clear() {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+	sd.searches = make(map[string]time.Time)
+}
+
+// CleanOld removes searches older than maxAge to prevent memory growth.
+func (sd *SearchDeduplicator) CleanOld() {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	cutoff := time.Now().Add(-sd.maxAge)
+	for key, lastSearch := range sd.searches {
+		if lastSearch.Before(cutoff) {
+			delete(sd.searches, key)
+		}
+	}
+}
+
+// NewManager creates an automation manager with the required dependencies.
+func NewManager(database *db.Database, rssClient *rss.Client, dlMgr *download.Manager, mon *monitor.Monitor, storageMgr *storage.Manager) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		db:              database,
@@ -41,15 +101,18 @@ func NewManager(database *db.Database, rssClient *rss.Client, dlMgr *download.Ma
 		downloadManager: dlMgr,
 		monitor:         mon,
 		indexerManager:  &IndexerManager{db: database, indexers: make(map[uint32]indexer.Indexer)},
+		searchCache:     NewSearchDeduplicator(6 * time.Hour),
+		storageManager:  storageMgr,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
 }
 
 func (m *Manager) Start() {
-	m.wg.Add(2)
+	m.wg.Add(3)
 	go m.rssLoop()
 	go m.searchLoop()
+	go m.verifyLoop()
 	slog.Info("automation manager started")
 }
 
@@ -59,12 +122,48 @@ func (m *Manager) Stop() {
 	slog.Info("automation manager stopped")
 }
 
+func (m *Manager) verifyLoop() {
+	defer m.wg.Done()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+
+	m.verifyMedia()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.verifyMedia()
+		}
+	}
+}
+
+func (m *Manager) verifyMedia() {
+	if m.storageManager == nil {
+		return
+	}
+
+	slog.Info("verifying media storage integrity")
+	verifier := storage.NewVerifier(m.db, m.storageManager)
+	results := verifier.VerifyAllMedia(m.ctx)
+
+	var failed int
+	for _, r := range results {
+		if !r.Success {
+			failed++
+			slog.Warn("media verification failed", "type", r.MediaType, "id", r.ID, "error", r.Error)
+		}
+	}
+
+	slog.Info("media verification complete", "total", len(results), "failed", failed)
+}
+
 func (m *Manager) rssLoop() {
 	defer m.wg.Done()
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
-	// Initial check
 	m.checkRSS()
 
 	for {
@@ -94,7 +193,6 @@ func (m *Manager) checkRSS() {
 }
 
 func (m *Manager) processRSSItem(item rss.FeedItem) {
-	// Convert rss.FeedItem to indexer.SearchResult for decisions
 	res := indexer.SearchResult{
 		Title:      item.Title,
 		Size:       item.Size,
@@ -107,7 +205,6 @@ func (m *Manager) processRSSItem(item rss.FeedItem) {
 		Codec:      item.Codec,
 	}
 
-	// Decision logic: does this match anything in our watchlist?
 	watchlist, err := m.monitor.GetWatchlist()
 	if err != nil {
 		return
@@ -143,15 +240,18 @@ func (m *Manager) searchLoop() {
 func (m *Manager) performAutoSearch() {
 	slog.Info("performing automatic search for watchlist items")
 
-	// 1. Check watchlist for movies/manual entries
+	m.searchCache.CleanOld()
+
 	items, err := m.monitor.GetItemsNeedingSearch(24 * time.Hour)
 	if err == nil {
 		for _, item := range items {
-			m.searchForItem(item)
+			cacheKey := fmt.Sprintf("search:%d:%d", item.MediaType, item.MediaID)
+			if m.searchCache.ShouldSearch(cacheKey) {
+				m.searchForItem(item)
+			}
 		}
 	}
 
-	// 2. Check for missing TV episodes
 	m.checkMissingEpisodes()
 }
 
@@ -168,7 +268,6 @@ func (m *Manager) checkMissingEpisodes() {
 	}
 
 	tvshows.Scan(func(show db.TVShow) bool {
-		// Only check if show is monitored and not completed/ignored
 		if show.Monitored && (show.Status == db.MediaStatusAvailable || show.Status == db.MediaStatusQueued) {
 			eps, _ := episodesTable.Query("ShowID", show.ID)
 			for _, ep := range eps {
@@ -183,11 +282,9 @@ func (m *Manager) checkMissingEpisodes() {
 }
 
 func (m *Manager) searchForEpisode(show db.TVShow, ep db.TVEpisode) {
-	// Shared Global Pool: Check if anyone else already has this episode or is downloading it
 	episodesTable, _ := m.db.TVEpisodes()
 	showTable, _ := m.db.TVShows()
 
-	// 1. Check for available episode globally
 	available, _ := episodesTable.Filter(func(e db.TVEpisode) bool {
 		if e.Season != ep.Season || e.Episode != ep.Episode || e.Status != db.MediaStatusAvailable {
 			return false
@@ -205,7 +302,6 @@ func (m *Manager) searchForEpisode(show db.TVShow, ep db.TVEpisode) {
 		return
 	}
 
-	// 2. Check if anyone is already downloading it
 	downloading, _ := episodesTable.Filter(func(e db.TVEpisode) bool {
 		if e.Season != ep.Season || e.Episode != ep.Episode || (e.Status != db.MediaStatusDownloading && e.Status != db.MediaStatusQueued) {
 			return false
@@ -222,28 +318,21 @@ func (m *Manager) searchForEpisode(show db.TVShow, ep db.TVEpisode) {
 		return
 	}
 
+	cacheKey := fmt.Sprintf("episode:%d:%d:%d", show.TMDBID, ep.Season, ep.Episode)
+	if !m.searchCache.ShouldSearch(cacheKey) {
+		slog.Info("recently searched for episode, skipping", "show", show.Title, "S", ep.Season, "E", ep.Episode)
+		return
+	}
+
 	query := fmt.Sprintf("%s S%02dE%02d", show.Title, ep.Season, ep.Episode)
 	slog.Info("searching for episode", "query", query)
 
-	indexers, err := m.indexerManager.GetEnabledIndexers()
-	if err != nil {
+	results := m.searchAllIndexers(query, indexer.CategoryTV)
+	if len(results) == 0 {
 		return
 	}
 
-	var allResults []indexer.SearchResult
-	for _, idx := range indexers {
-		results, err := idx.Search(m.ctx, query, indexer.CategoryTV, 0)
-		if err != nil {
-			continue
-		}
-		allResults = append(allResults, results...)
-	}
-
-	if len(allResults) == 0 {
-		return
-	}
-
-	bestResults, err := m.monitor.Decisions(allResults)
+	bestResults, err := m.monitor.Decisions(results)
 	if err != nil || len(bestResults) == 0 {
 		return
 	}
@@ -252,38 +341,10 @@ func (m *Manager) searchForEpisode(show db.TVShow, ep db.TVEpisode) {
 	m.triggerEpisodeDownload(show, ep, best)
 }
 
-func (m *Manager) triggerEpisodeDownload(show db.TVShow, ep db.TVEpisode, res indexer.SearchResult) {
-	job := &db.DownloadJob{
-		MediaType: db.MediaTypeTV,
-		MediaID:   ep.ID,
-		Title:     res.Title,
-		Status:    db.DownloadStatusQueued,
-	}
-
-	if res.NZBLink != "" {
-		job.Provider = db.DownloadProviderUsenet
-		job.NZBData = res.NZBLink
-	} else {
-		job.Provider = db.DownloadProviderTorrent
-		job.MagnetURI = res.MagnetURI
-		job.InfoHash = res.InfoHash
-	}
-
-	if err := m.downloadManager.AddDownload(job); err != nil {
-		return
-	}
-
-	// Update episode status
-	ep.Status = db.MediaStatusDownloading
-	ep.UpdatedAt = time.Now()
-	table, _ := m.db.TVEpisodes()
-	_ = table.Update(ep.ID, &ep)
-}
-
-func (m *Manager) SearchIndexers(ctx context.Context, query string) ([]indexer.SearchResult, error) {
+func (m *Manager) searchAllIndexers(query string, category indexer.Category) []indexer.SearchResult {
 	indexers, err := m.indexerManager.GetEnabledIndexers()
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	var allResults []indexer.SearchResult
@@ -291,21 +352,45 @@ func (m *Manager) SearchIndexers(ctx context.Context, query string) ([]indexer.S
 	var wg sync.WaitGroup
 
 	for _, idx := range indexers {
+		cfg := idx.GetConfig()
+		limiter := indexer.GlobalSearchLimiter.GetLimiter(cfg.ID)
+
+		if limiter.IsCooldown(cfg.ID) {
+			slog.Debug("indexer in cooldown", "indexer", cfg.Name)
+			continue
+		}
+
+		limiter.Wait(cfg.ID)
+
 		wg.Add(1)
 		go func(i indexer.Indexer) {
 			defer wg.Done()
-			results, err := i.Search(ctx, query, indexer.CategoryAll, 0)
+
+			cfg := i.GetConfig()
+			results, err := i.Search(m.ctx, query, category, 0)
 			if err != nil {
+				slog.Warn("search failed", "indexer", cfg.Name, "error", err)
+				indexer.GlobalSearchLimiter.GetLimiter(cfg.ID).RecordFailure(cfg.ID)
 				return
 			}
+
+			indexer.GlobalSearchLimiter.GetLimiter(cfg.ID).RecordSuccess(cfg.ID)
+
 			mu.Lock()
+			for j := range results {
+				results[j].Indexer = cfg.Name
+			}
 			allResults = append(allResults, results...)
 			mu.Unlock()
 		}(idx)
 	}
 
 	wg.Wait()
-	return allResults, nil
+	return allResults
+}
+
+func (m *Manager) SearchIndexers(ctx context.Context, query string) ([]indexer.SearchResult, error) {
+	return m.searchAllIndexers(query, indexer.CategoryAll), nil
 }
 
 func (m *Manager) SearchForItem(item monitor.WatchlistItem) {
@@ -313,7 +398,6 @@ func (m *Manager) SearchForItem(item monitor.WatchlistItem) {
 }
 
 func (m *Manager) searchForItem(item monitor.WatchlistItem) {
-	// 1. Fetch the actual media record to get TMDBID
 	var tmdbID uint32
 	if item.MediaType == db.MediaTypeMovie {
 		table, _ := m.db.Movies()
@@ -330,7 +414,6 @@ func (m *Manager) searchForItem(item monitor.WatchlistItem) {
 	}
 
 	if tmdbID > 0 {
-		// 2. Check if anyone has it available in global pool
 		if item.MediaType == db.MediaTypeMovie {
 			table, _ := m.db.Movies()
 			available, _ := table.Filter(func(mov db.Movie) bool {
@@ -348,7 +431,6 @@ func (m *Manager) searchForItem(item monitor.WatchlistItem) {
 				return
 			}
 
-			// 3. Check if anyone is already downloading it
 			downloading, _ := table.Filter(func(mov db.Movie) bool {
 				return mov.TMDBID == tmdbID && (mov.Status == db.MediaStatusDownloading || mov.Status == db.MediaStatusQueued) && mov.ID != item.MediaID
 			})
@@ -361,43 +443,34 @@ func (m *Manager) searchForItem(item monitor.WatchlistItem) {
 
 	slog.Info("searching for item", "title", item.Title)
 
-	indexers, err := m.indexerManager.GetEnabledIndexers()
-	if err != nil {
+	results := m.searchAllIndexers(item.Title, indexer.CategoryAll)
+	if len(results) == 0 {
 		return
 	}
 
-	var allResults []indexer.SearchResult
-	for _, idx := range indexers {
-		results, err := idx.Search(m.ctx, item.Title, indexer.CategoryAll, 0)
-		if err != nil {
-			continue
-		}
-		allResults = append(allResults, results...)
-	}
-
-	if len(allResults) == 0 {
-		return
-	}
-
-	// Filter and pick best
-	bestResults, err := m.monitor.Decisions(allResults)
+	bestResults, err := m.monitor.Decisions(results)
 	if err != nil || len(bestResults) == 0 {
 		return
 	}
 
-	// For now, just pick the first one from filtered results
 	best := bestResults[0]
 	slog.Info("found best release via search", "title", best.Title)
 	m.triggerDownload(item, best)
 }
 
 func (m *Manager) matchItem(wanted monitor.WatchlistItem, res indexer.SearchResult) bool {
-	// Very simple fuzzy match
-	title := strings.ToLower(res.Title)
-	wantedTitle := strings.ToLower(wanted.Title)
+	title := normalizeTitle(res.Title)
+	wantedTitle := normalizeTitle(wanted.Title)
 
 	if !strings.Contains(title, wantedTitle) {
-		return false
+		if wanted.Year > 0 {
+			yearStr := fmt.Sprintf("%d", wanted.Year)
+			if !strings.Contains(title, wantedTitle) || !strings.Contains(title, yearStr) {
+				return false
+			}
+		} else {
+			return false
+		}
 	}
 
 	if wanted.Year > 0 {
@@ -407,9 +480,16 @@ func (m *Manager) matchItem(wanted monitor.WatchlistItem, res indexer.SearchResu
 		}
 	}
 
-	// Use monitor decisions for quality/size checks
 	results, err := m.monitor.Decisions([]indexer.SearchResult{res})
 	return err == nil && len(results) > 0
+}
+
+func normalizeTitle(title string) string {
+	title = strings.ToLower(title)
+	title = strings.ReplaceAll(title, "_", " ")
+	title = strings.ReplaceAll(title, ".", " ")
+	title = strings.TrimSpace(title)
+	return title
 }
 
 func (m *Manager) triggerDownload(item monitor.WatchlistItem, res indexer.SearchResult) {
@@ -438,8 +518,34 @@ func (m *Manager) triggerDownload(item monitor.WatchlistItem, res indexer.Search
 		return
 	}
 
-	// Update watchlist item
 	m.monitor.UpdateWatchlistItem(item.ID, map[string]interface{}{"complete": true})
+}
+
+func (m *Manager) triggerEpisodeDownload(show db.TVShow, ep db.TVEpisode, res indexer.SearchResult) {
+	job := &db.DownloadJob{
+		MediaType: db.MediaTypeTV,
+		MediaID:   ep.ID,
+		Title:     res.Title,
+		Status:    db.DownloadStatusQueued,
+	}
+
+	if res.NZBLink != "" {
+		job.Provider = db.DownloadProviderUsenet
+		job.NZBData = res.NZBLink
+	} else {
+		job.Provider = db.DownloadProviderTorrent
+		job.MagnetURI = res.MagnetURI
+		job.InfoHash = res.InfoHash
+	}
+
+	if err := m.downloadManager.AddDownload(job); err != nil {
+		return
+	}
+
+	ep.Status = db.MediaStatusDownloading
+	ep.UpdatedAt = time.Now()
+	table, _ := m.db.TVEpisodes()
+	_ = table.Update(ep.ID, &ep)
 }
 
 func (im *IndexerManager) GetEnabledIndexers() ([]indexer.Indexer, error) {
@@ -465,7 +571,6 @@ func (im *IndexerManager) GetEnabledIndexers() ([]indexer.Indexer, error) {
 			continue
 		}
 
-		// Create new indexer instance
 		catList := strings.Split(cfg.Categories, ",")
 		var categories []indexer.Category
 		for _, catStr := range catList {
@@ -493,4 +598,10 @@ func (im *IndexerManager) GetEnabledIndexers() ([]indexer.Indexer, error) {
 	}
 
 	return result, nil
+}
+
+func (im *IndexerManager) ResetIndexer(id uint32) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	delete(im.indexers, id)
 }

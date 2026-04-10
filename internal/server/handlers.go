@@ -3,14 +3,22 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/yay101/mediarr/internal/automation"
 	"github.com/yay101/mediarr/internal/db"
 	"github.com/yay101/mediarr/internal/indexer"
+	"github.com/yay101/mediarr/internal/monitor"
+	"github.com/yay101/mediarr/internal/search"
+	"github.com/yay101/mediarr/internal/storage"
 	"github.com/yay101/mediarr/internal/subtitles"
 )
 
@@ -144,6 +152,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 			"id":       user.ID,
 			"username": user.Username,
 			"role":     role,
+			"api_key":  user.APIKey,
 		},
 	})
 }
@@ -182,11 +191,35 @@ func (s *Server) handleListMedia(w http.ResponseWriter, r *http.Request) {
 				})
 				result["tv_shows"] = list
 			}
+			if albums, err := database.MusicAlbums(); err == nil {
+				var list []db.MusicAlbum
+				albums.Scan(func(a db.MusicAlbum) bool {
+					list = append(list, a)
+					return true
+				})
+				result["music"] = list
+			}
+			if books, err := database.Books(); err == nil {
+				var list []db.Book
+				books.Scan(func(b db.Book) bool {
+					list = append(list, b)
+					return true
+				})
+				result["books"] = list
+			}
+			if manga, err := database.Manga(); err == nil {
+				var list []db.Manga
+				manga.Scan(func(m db.Manga) bool {
+					list = append(list, m)
+					return true
+				})
+				result["manga"] = list
+			}
 		}
 		writeJSON(w, result)
 	case "movie":
 		if database == nil {
-			writeJSON(w, []interface{}{})
+			writeJSON(w, map[string]interface{}{"movies": []db.Movie{}})
 			return
 		}
 		movies, err := database.Movies()
@@ -201,10 +234,10 @@ func (s *Server) handleListMedia(w http.ResponseWriter, r *http.Request) {
 			}
 			return true
 		})
-		writeJSON(w, list)
+		writeJSON(w, map[string]interface{}{"movies": list})
 	case "tv":
 		if database == nil {
-			writeJSON(w, []interface{}{})
+			writeJSON(w, map[string]interface{}{"tv_shows": []db.TVShow{}})
 			return
 		}
 		tvshows, err := database.TVShows()
@@ -219,7 +252,73 @@ func (s *Server) handleListMedia(w http.ResponseWriter, r *http.Request) {
 			}
 			return true
 		})
-		writeJSON(w, list)
+		writeJSON(w, map[string]interface{}{"tv_shows": list})
+	case "music":
+		if database == nil {
+			writeJSON(w, map[string]interface{}{"music": []db.MusicAlbum{}})
+			return
+		}
+		albums, err := database.MusicAlbums()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var list []db.MusicAlbum
+		albums.Scan(func(a db.MusicAlbum) bool {
+			list = append(list, a)
+			return true
+		})
+		writeJSON(w, map[string]interface{}{"music": list})
+	case "book":
+		if database == nil {
+			writeJSON(w, map[string]interface{}{"books": []db.Book{}})
+			return
+		}
+		books, err := database.Books()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var list []db.Book
+		books.Scan(func(b db.Book) bool {
+			list = append(list, b)
+			return true
+		})
+		writeJSON(w, map[string]interface{}{"books": list})
+	case "audiobook":
+		if database == nil {
+			writeJSON(w, map[string]interface{}{"audiobooks": []db.Audiobook{}})
+			return
+		}
+		table, err := database.Audiobooks()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var list []db.Audiobook
+		table.Scan(func(a db.Audiobook) bool {
+			if a.UserID == user.ID {
+				list = append(list, a)
+			}
+			return true
+		})
+		writeJSON(w, map[string]interface{}{"audiobooks": list})
+	case "manga":
+		if database == nil {
+			writeJSON(w, map[string]interface{}{"manga": []db.Manga{}})
+			return
+		}
+		manga, err := database.Manga()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var list []db.Manga
+		manga.Scan(func(m db.Manga) bool {
+			list = append(list, m)
+			return true
+		})
+		writeJSON(w, map[string]interface{}{"manga": list})
 	}
 }
 
@@ -231,11 +330,13 @@ func (s *Server) handleAddMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Type    string `json:"type"`
-		Title   string `json:"title"`
-		Year    uint16 `json:"year"`
-		TMDBID  uint32 `json:"tmdb_id"`
-		Quality string `json:"quality"`
+		Type        string `json:"type"`
+		Title       string `json:"title"`
+		Year        uint16 `json:"year"`
+		TMDBID      uint32 `json:"tmdb_id"`
+		ExternalID  string `json:"external_id"`
+		ExternalSrc string `json:"external_src"`
+		Quality     string `json:"quality"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -264,7 +365,7 @@ func (s *Server) handleAddMedia(w http.ResponseWriter, r *http.Request) {
 		status := db.MediaStatusQueued
 		path := ""
 		existing, _ := table.Filter(func(m db.Movie) bool {
-			return m.TMDBID == req.TMDBID && m.Status == db.MediaStatusAvailable
+			return (m.TMDBID == req.TMDBID || (req.ExternalSrc == "tmdb" && m.TMDBID != 0 && fmt.Sprintf("%d", m.TMDBID) == req.ExternalID)) && m.Status == db.MediaStatusAvailable
 		})
 		if len(existing) > 0 {
 			status = db.MediaStatusAvailable
@@ -282,6 +383,9 @@ func (s *Server) handleAddMedia(w http.ResponseWriter, r *http.Request) {
 			AddedAt:   time.Now(),
 			UpdatedAt: time.Now(),
 		}
+		if movie.TMDBID == 0 && req.ExternalSrc == "tmdb" {
+			fmt.Sscanf(req.ExternalID, "%d", &movie.TMDBID)
+		}
 		id, err = table.Insert(movie)
 	case "tv":
 		table, err := database.TVShows()
@@ -293,7 +397,7 @@ func (s *Server) handleAddMedia(w http.ResponseWriter, r *http.Request) {
 		// Check for existing show globally (Shared Pool Path 1)
 		status := db.MediaStatusQueued
 		existing, _ := table.Filter(func(s db.TVShow) bool {
-			return s.TMDBID == req.TMDBID && s.Status == db.MediaStatusAvailable
+			return (s.TMDBID == req.TMDBID || (req.ExternalSrc == "tmdb" && s.TMDBID != 0 && fmt.Sprintf("%d", s.TMDBID) == req.ExternalID)) && s.Status == db.MediaStatusAvailable
 		})
 		if len(existing) > 0 {
 			status = db.MediaStatusAvailable
@@ -309,13 +413,85 @@ func (s *Server) handleAddMedia(w http.ResponseWriter, r *http.Request) {
 			AddedAt:   time.Now(),
 			UpdatedAt: time.Now(),
 		}
+		if show.TMDBID == 0 && req.ExternalSrc == "tmdb" {
+			fmt.Sscanf(req.ExternalID, "%d", &show.TMDBID)
+		}
 		id, err = table.Insert(show)
+	case "music":
+		table, err := database.MusicAlbums()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		album := &db.MusicAlbum{
+			Title:         req.Title,
+			Year:          req.Year,
+			MusicBrainzID: req.ExternalID,
+			Status:        db.MediaStatusQueued,
+			AddedAt:       time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+		id, err = table.Insert(album)
+	case "book":
+		table, err := database.Books()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		book := &db.Book{
+			Title:         req.Title,
+			Year:          req.Year,
+			OpenLibraryID: req.ExternalID,
+			Status:        db.MediaStatusQueued,
+			AddedAt:       time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+		id, err = table.Insert(book)
+	case "audiobook":
+		table, err := database.Audiobooks()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		audiobook := &db.Audiobook{
+			UserID:    user.ID,
+			Title:     req.Title,
+			Author:    req.ExternalID,
+			Year:      req.Year,
+			ASIN:      req.ExternalID,
+			Status:    db.MediaStatusQueued,
+			AddedAt:   time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		id, err = table.Insert(audiobook)
+	case "manga":
+		table, err := database.Manga()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		manga := &db.Manga{
+			Title:      req.Title,
+			Year:       req.Year,
+			MangaDexID: req.ExternalID,
+			Status:     db.MediaStatusQueued,
+			AddedAt:    time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+		id, err = table.Insert(manga)
 	}
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	userID := user.ID
+	mediaType := req.Type
+	title := req.Title
+	year := req.Year
+	quality := req.Quality
+	go s.triggerAutoSearch(userID, mediaType, id, title, year, quality)
 
 	writeJSON(w, map[string]interface{}{"id": id, "status": "added"})
 }
@@ -365,7 +541,58 @@ func (s *Server) handleGetMedia(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "show not found", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, show)
+
+		// Load episodes
+		episodesTable, err := database.TVEpisodes()
+		var episodes []db.TVEpisode
+		if err == nil {
+			episodes, _ = episodesTable.Query("ShowID", show.ID)
+		}
+
+		writeJSON(w, map[string]interface{}{
+			"show":     show,
+			"episodes": episodes,
+		})
+	case "music":
+		table, err := database.MusicAlbums()
+		if err == nil {
+			album, _ := table.Get(uint32(id))
+			if album != nil {
+				writeJSON(w, album)
+				return
+			}
+		}
+		http.Error(w, "music not found", http.StatusNotFound)
+	case "book":
+		table, err := database.Books()
+		if err == nil {
+			book, _ := table.Get(uint32(id))
+			if book != nil {
+				writeJSON(w, book)
+				return
+			}
+		}
+		http.Error(w, "book not found", http.StatusNotFound)
+	case "audiobook":
+		table, err := database.Audiobooks()
+		if err == nil {
+			ab, _ := table.Get(uint32(id))
+			if ab != nil && ab.UserID == user.ID {
+				writeJSON(w, ab)
+				return
+			}
+		}
+		http.Error(w, "audiobook not found", http.StatusNotFound)
+	case "manga":
+		table, err := database.Manga()
+		if err == nil {
+			manga, _ := table.Get(uint32(id))
+			if manga != nil {
+				writeJSON(w, manga)
+				return
+			}
+		}
+		http.Error(w, "manga not found", http.StatusNotFound)
 	}
 }
 
@@ -406,6 +633,29 @@ func (s *Server) handleDeleteMedia(w http.ResponseWriter, r *http.Request) {
 			if show != nil && show.UserID == user.ID {
 				table.Delete(uint32(id))
 			}
+		}
+	case "music", "musicalbum", "musicalbums":
+		table, err := database.MusicAlbums()
+		if err == nil {
+			table.Delete(uint32(id))
+		}
+	case "book", "books":
+		table, err := database.Books()
+		if err == nil {
+			table.Delete(uint32(id))
+		}
+	case "audiobook", "audiobooks":
+		table, err := database.Audiobooks()
+		if err == nil {
+			ab, _ := table.Get(uint32(id))
+			if ab != nil && ab.UserID == user.ID {
+				table.Delete(uint32(id))
+			}
+		}
+	case "manga":
+		table, err := database.Manga()
+		if err == nil {
+			table.Delete(uint32(id))
 		}
 	}
 
@@ -479,10 +729,35 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	searchType := r.URL.Query().Get("type")
+	if searchType == "" {
+		searchType = "all"
+	}
+
+	cfg := s.app.Config()
+	// 1. Try Metadata Search via mediarr-server
+	if cfg.MetadataAPI.URL != "" && !strings.Contains(cfg.MetadataAPI.URL, "themoviedb.org") {
+		results, err := s.searchMetadataServer(query, searchType)
+		if err == nil && len(results) > 0 {
+			writeJSON(w, map[string]interface{}{"type": "metadata", "results": results})
+			return
+		}
+	}
+
+	// 2. Fallback to direct TMDB if configured (backward compatibility)
+	if cfg.MetadataAPI.APIKey != "" && cfg.MetadataAPI.APIKey != "YOUR_TMDB_API_KEY" && strings.Contains(cfg.MetadataAPI.URL, "themoviedb.org") {
+		results, err := s.searchMetadata(query)
+		if err == nil && len(results) > 0 {
+			writeJSON(w, map[string]interface{}{"type": "metadata", "results": results})
+			return
+		}
+	}
+
+	// 3. Fallback to Indexer Search (Releases)
 	automationMgr := s.app.Automation().(*automation.Manager)
 	results, err := automationMgr.SearchIndexers(r.Context(), query)
 	if err != nil {
-		writeJSON(w, []interface{}{})
+		writeJSON(w, map[string]interface{}{"type": "releases", "results": []interface{}{}})
 		return
 	}
 
@@ -490,10 +765,161 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		results = []indexer.SearchResult{}
 	}
 
-	writeJSON(w, results)
+	writeJSON(w, map[string]interface{}{"type": "releases", "results": results})
+}
+
+func (s *Server) searchMetadataServer(query string, searchType string) ([]interface{}, error) {
+	cfg := s.app.Config()
+	apiURL := cfg.MetadataAPI.URL
+
+	var allResults []interface{}
+
+	searchURL := fmt.Sprintf("%s/search?query=%s&type=%s", apiURL, url.QueryEscape(query), searchType)
+	resp, err := http.Get(searchURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []struct {
+				Title       string `json:"title"`
+				Year        int    `json:"year"`
+				TMDBID      string `json:"tmdb_id"`
+				ExternalID  string `json:"external_id"`
+				ExternalSrc string `json:"external_src"`
+				Type        string `json:"type"`
+				Description string `json:"description"`
+				Poster      *struct {
+					URL string `json:"url"`
+				} `json:"poster"`
+				Rating *struct {
+					Value float64 `json:"value"`
+				} `json:"rating"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err == nil && apiResp.Success {
+		for _, item := range apiResp.Data.Items {
+			tmdbID := uint32(0)
+			if item.TMDBID != "" {
+				fmt.Sscanf(item.TMDBID, "%d", &tmdbID)
+			}
+
+			posterURL := ""
+			if item.Poster != nil {
+				posterURL = item.Poster.URL
+			}
+
+			rating := 0.0
+			if item.Rating != nil {
+				rating = item.Rating.Value
+			}
+
+			allResults = append(allResults, map[string]interface{}{
+				"Type":        item.Type,
+				"TMDBID":      tmdbID,
+				"ExternalID":  item.ExternalID,
+				"ExternalSrc": item.ExternalSrc,
+				"Title":       item.Title,
+				"Year":        uint16(item.Year),
+				"Overview":    item.Description,
+				"PosterURL":   posterURL,
+				"VoteAverage": rating,
+			})
+		}
+	}
+
+	return allResults, nil
+}
+
+func (s *Server) searchMetadata(query string) ([]interface{}, error) {
+	cfg := s.app.Config()
+	apiKey := cfg.MetadataAPI.APIKey
+
+	// TMDB Search Movie
+	movieURL := fmt.Sprintf("https://api.themoviedb.org/3/search/movie?api_key=%s&query=%s", apiKey, url.QueryEscape(query))
+	resp, err := http.Get(movieURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var movieData struct {
+		Results []struct {
+			ID          uint32  `json:"id"`
+			Title       string  `json:"title"`
+			ReleaseDate string  `json:"release_date"`
+			Overview    string  `json:"overview"`
+			PosterPath  string  `json:"poster_path"`
+			VoteAverage float64 `json:"vote_average"`
+		} `json:"results"`
+	}
+	json.NewDecoder(resp.Body).Decode(&movieData)
+
+	var results []interface{}
+	for _, m := range movieData.Results {
+		year := uint16(0)
+		if len(m.ReleaseDate) >= 4 {
+			fmt.Sscanf(m.ReleaseDate[:4], "%d", &year)
+		}
+		results = append(results, map[string]interface{}{
+			"Type":        "movie",
+			"TMDBID":      m.ID,
+			"Title":       m.Title,
+			"Year":        year,
+			"Overview":    m.Overview,
+			"PosterURL":   "https://image.tmdb.org/t/p/w500" + m.PosterPath,
+			"VoteAverage": m.VoteAverage,
+		})
+	}
+
+	// TMDB Search TV
+	tvURL := fmt.Sprintf("https://api.themoviedb.org/3/search/tv?api_key=%s&query=%s", apiKey, url.QueryEscape(query))
+	respTV, err := http.Get(tvURL)
+	if err == nil {
+		defer respTV.Body.Close()
+		var tvData struct {
+			Results []struct {
+				ID           uint32  `json:"id"`
+				Name         string  `json:"name"`
+				FirstAirDate string  `json:"first_air_date"`
+				Overview     string  `json:"overview"`
+				PosterPath   string  `json:"poster_path"`
+				VoteAverage  float64 `json:"vote_average"`
+			} `json:"results"`
+		}
+		json.NewDecoder(respTV.Body).Decode(&tvData)
+		for _, t := range tvData.Results {
+			year := uint16(0)
+			if len(t.FirstAirDate) >= 4 {
+				fmt.Sscanf(t.FirstAirDate[:4], "%d", &year)
+			}
+			results = append(results, map[string]interface{}{
+				"Type":        "tv",
+				"TMDBID":      t.ID,
+				"Title":       t.Name,
+				"Year":        year,
+				"Overview":    t.Overview,
+				"PosterURL":   "https://image.tmdb.org/t/p/w500" + t.PosterPath,
+				"VoteAverage": t.VoteAverage,
+			})
+		}
+	}
+
+	return results, nil
 }
 
 func (s *Server) handleTriggerSearch(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	mediaType := r.PathValue("type")
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -508,36 +934,87 @@ func (s *Server) handleTriggerSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var title string
+	var item monitor.WatchlistItem
+	item.UserID = user.ID
+	item.MediaID = uint32(id)
+
 	switch mediaType {
 	case "movie":
+		item.MediaType = db.MediaTypeMovie
 		table, _ := database.Movies()
 		m, _ := table.Get(uint32(id))
 		if m != nil {
-			title = m.Title
+			item.Title = m.Title
+			item.Year = m.Year
+			item.Quality = m.Quality
 		}
-	case "tv", "episode":
-		table, _ := database.TVEpisodes()
-		ep, _ := table.Get(uint32(id))
+	case "tv":
+		item.MediaType = db.MediaTypeTV
+		table, _ := database.TVShows()
+		show, _ := table.Get(uint32(id))
+		if show != nil {
+			item.Title = show.Title
+			item.Year = show.Year
+		}
+	case "episode":
+		item.MediaType = db.MediaTypeTV
+		epTable, _ := database.TVEpisodes()
+		ep, _ := epTable.Get(uint32(id))
 		if ep != nil {
 			showTable, _ := database.TVShows()
 			show, _ := showTable.Get(ep.ShowID)
 			if show != nil {
-				title = fmt.Sprintf("%s S%02dE%02d", show.Title, ep.Season, ep.Episode)
+				item.Title = fmt.Sprintf("%s S%02dE%02d", show.Title, ep.Season, ep.Episode)
+				item.Year = show.Year
+				item.MediaID = show.ID
 			}
+		}
+	case "music":
+		item.MediaType = db.MediaTypeMusic
+		table, _ := database.MusicAlbums()
+		album, _ := table.Get(uint32(id))
+		if album != nil {
+			item.Title = fmt.Sprintf("%s %s", album.Artist, album.Title)
+			item.Year = album.Year
+		}
+	case "book":
+		item.MediaType = db.MediaTypeBook
+		table, _ := database.Books()
+		book, _ := table.Get(uint32(id))
+		if book != nil {
+			item.Title = fmt.Sprintf("%s %s", book.Author, book.Title)
+			item.Year = book.Year
+		}
+	case "audiobook":
+		item.MediaType = db.MediaTypeAudiobook
+		table, _ := database.Audiobooks()
+		ab, _ := table.Get(uint32(id))
+		if ab != nil {
+			item.Title = fmt.Sprintf("%s %s", ab.Author, ab.Title)
+			item.Year = ab.Year
+		}
+	case "manga":
+		item.MediaType = db.MediaTypeManga
+		table, _ := database.Manga()
+		manga, _ := table.Get(uint32(id))
+		if manga != nil {
+			item.Title = manga.Title
+			item.Year = manga.Year
 		}
 	}
 
-	if title == "" {
+	if item.Title == "" {
 		http.Error(w, "item not found", http.StatusNotFound)
 		return
 	}
 
 	go func() {
-		slog.Info("manual search triggered via API", "title", title)
+		automationMgr := s.app.Automation().(*automation.Manager)
+		slog.Info("manual search triggered via API", "title", item.Title)
+		automationMgr.SearchForItem(item)
 	}()
 
-	writeJSON(w, map[string]string{"status": "search triggered", "title": title})
+	writeJSON(w, map[string]string{"status": "search triggered", "title": item.Title})
 }
 
 func (s *Server) handleListRSSFeeds(w http.ResponseWriter, r *http.Request) {
@@ -883,11 +1360,14 @@ func (s *Server) handleStreamFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var filePath string
+	var storageLocationID uint32
+
 	movieTable, err := database.Movies()
 	if err == nil {
 		movie, _ := movieTable.Get(uint32(id))
 		if movie != nil && movie.UserID == user.ID {
 			filePath = movie.Path
+			storageLocationID = movie.StorageLocationID
 		}
 	}
 
@@ -900,6 +1380,7 @@ func (s *Server) handleStreamFile(w http.ResponseWriter, r *http.Request) {
 				show, _ := showTable.Get(ep.ShowID)
 				if show != nil && show.UserID == user.ID {
 					filePath = ep.Path
+					storageLocationID = ep.StorageLocationID
 				}
 			}
 		}
@@ -908,6 +1389,35 @@ func (s *Server) handleStreamFile(w http.ResponseWriter, r *http.Request) {
 	if filePath == "" {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
+	}
+
+	if storageMgr := s.app.Storage(); storageMgr != nil {
+		storageManager, ok := storageMgr.(*storage.Manager)
+		if ok && storageLocationID > 0 {
+			loc, found := storageManager.GetLocation(storageLocationID)
+			if found && loc.Type == "s3" {
+				locID, key, err := storageManager.ParseVirtualPath(filePath)
+				if err == nil && locID > 0 {
+					backend, err := storageManager.GetBackendForLocation(loc)
+					if err == nil {
+						reader, err := backend.Read(r.Context(), key)
+						if err != nil {
+							http.Error(w, "failed to read from storage", http.StatusInternalServerError)
+							return
+						}
+						defer reader.Close()
+
+						if size, err := backend.GetSize(r.Context(), key); err == nil && size > 0 {
+							w.Header().Set("Content-Type", "application/octet-stream")
+							w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(filePath))
+							w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+							io.Copy(w, reader)
+							return
+						}
+					}
+				}
+			}
+		}
 	}
 
 	http.ServeFile(w, r, filePath)
@@ -946,6 +1456,39 @@ func (s *Server) handleKillTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "reloaded"})
+}
+
+func (s *Server) handleVerifyMedia(w http.ResponseWriter, r *http.Request) {
+	storageMgr := s.app.Storage()
+	if storageMgr == nil {
+		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	storageManager, ok := storageMgr.(*storage.Manager)
+	if !ok {
+		http.Error(w, "Invalid storage manager", http.StatusInternalServerError)
+		return
+	}
+
+	verifier := storage.NewVerifier(s.app.DB(), storageManager)
+	results := verifier.VerifyAllMedia(r.Context())
+
+	var successCount, failCount int
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failCount++
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"total":   len(results),
+		"success": successCount,
+		"failed":  failCount,
+		"results": results,
+	})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -991,6 +1534,274 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to render login template", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) triggerAutoSearch(userID uint32, mediaType string, mediaID uint32, title string, year uint16, quality string) {
+	automationMgr := s.app.Automation().(*automation.Manager)
+
+	item := monitor.WatchlistItem{
+		UserID:  userID,
+		MediaID: mediaID,
+		Title:   title,
+		Year:    year,
+		Quality: quality,
+	}
+
+	switch mediaType {
+	case "movie":
+		item.MediaType = db.MediaTypeMovie
+	case "tv":
+		item.MediaType = db.MediaTypeTV
+	case "music":
+		item.MediaType = db.MediaTypeMusic
+	case "book":
+		item.MediaType = db.MediaTypeBook
+	case "audiobook":
+		item.MediaType = db.MediaTypeAudiobook
+	case "manga":
+		item.MediaType = db.MediaTypeManga
+	default:
+		slog.Warn("unknown media type for auto-search", "type", mediaType)
+		return
+	}
+
+	slog.Info("auto-search triggered for new media", "type", mediaType, "title", title, "id", mediaID)
+	automationMgr.SearchForItem(item)
+}
+
+func (s *Server) handleManualSearch(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		Query   string `json:"query"`
+		Type    string `json:"type"`
+		MediaID uint32 `json:"media_id"`
+		Quality string `json:"quality"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+
+	var mediaType db.MediaType
+	switch req.Type {
+	case "movie":
+		mediaType = db.MediaTypeMovie
+	case "tv":
+		mediaType = db.MediaTypeTV
+	case "music":
+		mediaType = db.MediaTypeMusic
+	case "book":
+		mediaType = db.MediaTypeBook
+	default:
+		mediaType = db.MediaTypeMovie
+	}
+
+	searchMgr := s.app.Search()
+	session, err := searchMgr.SearchAll(nil, req.Query, mediaType, req.MediaID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"session_id": session.ID,
+		"query":      session.Query,
+		"status":     "searching",
+	})
+}
+
+func (s *Server) handleGetSearchResults(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID := r.PathValue("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	searchMgr := s.app.Search()
+	session, found := searchMgr.GetSession(sessionID)
+	if !found {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	response := map[string]interface{}{
+		"session_id": session.ID,
+		"query":      session.Query,
+		"results":    session.Results,
+		"created_at": session.CreatedAt,
+	}
+
+	writeJSON(w, response)
+}
+
+func (s *Server) handleDownloadSearchResult(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		SessionID string `json:"session_id"`
+		ResultIdx int    `json:"result_index"`
+		MediaID   uint32 `json:"media_id"`
+		MediaType string `json:"media_type"`
+		Title     string `json:"title"`
+		Quality   string `json:"quality"`
+		Force     bool   `json:"force"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	searchMgr := s.app.Search()
+	session, found := searchMgr.GetSession(req.SessionID)
+	if !found {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if req.ResultIdx < 0 || req.ResultIdx >= len(session.Results) {
+		http.Error(w, "invalid result index", http.StatusBadRequest)
+		return
+	}
+
+	result := session.Results[req.ResultIdx]
+
+	var mediaType db.MediaType
+	switch req.MediaType {
+	case "movie":
+		mediaType = db.MediaTypeMovie
+	case "tv":
+		mediaType = db.MediaTypeTV
+	case "music":
+		mediaType = db.MediaTypeMusic
+	case "book":
+		mediaType = db.MediaTypeBook
+	default:
+		mediaType = db.MediaTypeMovie
+	}
+
+	downloadReq := &search.DownloadRequest{
+		Result:    &result,
+		MediaID:   req.MediaID,
+		MediaType: mediaType,
+		Title:     req.Title,
+		Quality:   req.Quality,
+		Force:     req.Force,
+		UserID:    user.ID,
+	}
+
+	job, err := searchMgr.CreateDownloadJob(downloadReq)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	downloadMgr := s.app.Download()
+	if err := downloadMgr.AddDownload(job); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	searchMgr.ClearSession(req.SessionID)
+
+	writeJSON(w, map[string]interface{}{
+		"job_id": job.ID,
+		"status": "queued",
+		"title":  result.Title,
+		"force":  req.Force,
+	})
+}
+
+func (s *Server) handleClearSearchSession(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID := r.PathValue("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	searchMgr := s.app.Search()
+	searchMgr.ClearSession(sessionID)
+
+	writeJSON(w, map[string]string{"status": "cleared"})
+}
+
+func (s *Server) handleSearchWebSocket(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "query parameter 'q' is required", http.StatusBadRequest)
+		return
+	}
+
+	mediaTypeStr := r.URL.Query().Get("type")
+	mediaIDStr := r.URL.Query().Get("media_id")
+
+	var mediaType db.MediaType
+	switch mediaTypeStr {
+	case "movie":
+		mediaType = db.MediaTypeMovie
+	case "tv":
+		mediaType = db.MediaTypeTV
+	case "music":
+		mediaType = db.MediaTypeMusic
+	case "book":
+		mediaType = db.MediaTypeBook
+	default:
+		mediaType = db.MediaTypeMovie
+	}
+
+	var mediaID uint32
+	if mediaIDStr != "" {
+		if id, err := strconv.ParseUint(mediaIDStr, 10, 32); err == nil {
+			mediaID = uint32(id)
+		}
+	}
+
+	hub := s.app.SearchHub()
+	if hub == nil {
+		http.Error(w, "search hub not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	conn, err := websocket.Upgrade(w, r, nil, 0, 0)
+	if err != nil {
+		slog.Error("websocket upgrade failed", "error", err)
+		return
+	}
+
+	go hub.HandleSearch(conn, query, mediaType, mediaID)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
