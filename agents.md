@@ -59,31 +59,39 @@ Mediarr is a self-hosted media management server with:
 
 ```
 mediarr/
+├── main.go                           # Entry point
+├── go.mod
 ├── web/
 │   ├── static/
-│   │   ├── css/
-│   │   │   └── basecoat.min.css      # Basecoat UI styles
 │   │   └── js/
-│   │       ├── app.js                # Alpine.js initialization + stores
-│   │       └── ws.js                 # WebSocket bridge to Alpine.js
+│   │       └── app.js                # Alpine.js initialization + stores
 │   └── templates/
-│       ├── layout.html                # Base layout with Alpine shell
-│       ├── sidebar.html               # Navigation sidebar component
-│       ├── toast.html                 # Toast notification component
-│       ├── movies/
-│       │   ├── list.html             # Movie list page
-│       │   └── detail.html           # Movie detail page
-│       ├── tv/
-│       │   ├── list.html
-│       │   └── detail.html
-│       ├── downloads.html
-│       ├── search.html
-│       └── settings.html
-└── internal/
-    └── server/
-        ├── handlers.go                # HTTP handlers
-        ├── templates.go               # Template rendering helpers
-        └── ws.go                     # WebSocket hub
+│       ├── layout.html               # Base layout with Alpine shell
+│       ├── login.html                # Login page
+│       ├── dashboard.html           # Dashboard page
+│       └── ...
+├── server/                          # HTTP server
+│   ├── handlers.go                  # HTTP handlers
+│   ├── auth.go                      # Auth middleware
+│   ├── server.go                    # Server setup
+│   ├── templates.go                 # Template helpers
+│   └── ws.go                        # WebSocket hub
+├── db/                              # Database
+├── config/                          # Configuration
+├── ai/                              # AI services
+├── search/                          # Search
+├── download/                         # Download manager
+├── rss/                             # RSS feeds
+├── tracker/                         # Torrent trackers
+├── indexer/                         # Indexer clients
+├── storage/                         # Storage backends
+├── monitor/                         # Media monitoring
+├── automation/                      # Automation tasks
+├── organize/                        # File organization
+├── subtitles/                      # Subtitle downloading
+├── cache/                           # Caching
+├── tasks/                           # Task scheduling
+└── auth/                            # OIDC auth
 ```
 
 ## Alpine.js Architecture
