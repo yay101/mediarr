@@ -24,6 +24,7 @@ type Server struct {
 	mux        *http.ServeMux
 	oidcClient *oidc.Client
 	templates  *template.Template
+	wsHub      *WSHub
 }
 
 type App struct {
@@ -41,9 +42,14 @@ type App struct {
 
 func New(app *App) *Server {
 	mux := http.NewServeMux()
+	wsHub := NewWSHub()
+
+	go wsHub.Run()
+
 	s := &Server{
-		app: app,
-		mux: mux,
+		app:   app,
+		mux:   mux,
+		wsHub: wsHub,
 	}
 
 	// Initialize templates
@@ -116,6 +122,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/search/manual/{session_id}", s.authMiddleware(s.handleClearSearchSession))
 
 	s.mux.HandleFunc("GET /ws/search", s.authMiddleware(s.handleSearchWebSocket))
+	s.mux.HandleFunc("GET /ws", s.authMiddleware(s.handleWS))
 
 	s.mux.HandleFunc("GET /api/v1/rss", s.adminMiddleware(s.handleListRSSFeeds))
 	s.mux.HandleFunc("POST /api/v1/rss", s.adminMiddleware(s.handleAddRSSFeed))

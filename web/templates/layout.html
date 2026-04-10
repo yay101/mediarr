@@ -217,6 +217,7 @@
 
         async function handleRoute() {
             const path = window.location.pathname;
+            currentPath = path;
             
             // Handle dynamic routes
             const tvMatch = path.match(/^\/tv\/(\d+)$/);
@@ -268,12 +269,77 @@
 
         // Auth
         let currentUser = null;
+        let ws = null;
+        let currentPath = '/';
+        
+        function initWS() {
+            const wsUrl = `wss://${window.location.host}/ws`;
+            ws = new WebSocket(wsUrl);
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleWSMessage(msg);
+                } catch(e) {
+                    console.error('WS message parse error', e);
+                }
+            };
+            
+            ws.onclose = () => {
+                setTimeout(initWS, 5000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WS error', error);
+            };
+        }
+        
+        function handleWSMessage(msg) {
+            // Store latest update for each path
+            window.wsUpdateData = window.wsUpdateData || {};
+            window.wsUpdateData[msg.path] = msg.data;
+            
+            // Notify current render function if it cares
+            if (typeof onWSUpdate === 'function') {
+                onWSUpdate(msg.path, msg.data);
+            }
+            
+            // If refresh, always reload current page
+            if (msg.type === 'refresh') {
+                handleRoute();
+                return;
+            }
+            
+            // For updates: check if current page should refresh
+            const currentBase = getBasePath(currentPath);
+            const updateBase = getBasePath(msg.path);
+            
+            // Refresh if paths match at the base level (e.g., /movies matches /movies)
+            // or if it's a specific item update for current page
+            if (msg.path === currentPath || msg.path === currentBase) {
+                handleRoute();
+            }
+        }
+        
+        // Get base path (e.g., /movies from /movies/123)
+        function getBasePath(path) {
+            const parts = path.split('/');
+            return '/' + (parts[1] || '');
+        }
+        
+        // Check if a specific ID is in the latest update
+        window.isInWSUpdate = function(path, id) {
+            const data = window.wsUpdateData && window.wsUpdateData[path];
+            if (!data || !data.items) return false;
+            return data.items.some(item => item.id === id);
+        };
+         
         async function checkAuth() {
             try {
                 const res = await fetch('/api/v1/auth/me');
                 const data = await res.json();
                 if (!data.authenticated) {
-                    window.location.href = '/login'; // Show login choices
+                    window.location.href = '/login';
                     return;
                 }
                 currentUser = data.user;
@@ -281,6 +347,9 @@
                     <div>${data.user.username} (${data.user.role})</div>
                     <div style="font-size: 0.7rem; cursor: pointer;" title="Click to copy API Key" onclick="copyApiKey('${data.user.api_key}')">API Key: ${data.user.api_key.slice(0, 8)}...</div>
                 `;
+                
+                // Init WebSocket after auth
+                initWS();
                 
                 // Hide admin links if not admin
                 if (data.user.role !== 'admin') {
@@ -1184,15 +1253,29 @@
         
         async function verifyMedia() {
             const resultDiv = document.getElementById('action-result');
-            resultDiv.innerHTML = 'Verifying...';
+            resultDiv.innerHTML = 'Verifying...<div id="verify-progress"></div>';
             try {
                 const res = await fetch('/api/v1/media/verify', { method: 'POST' });
                 const data = await res.json();
-                resultDiv.innerHTML = \`Verification complete: \${data.success} succeeded, \${data.failed} failed of \${data.total} total\`;
+                resultDiv.innerHTML = `Verification complete: ${data.success} succeeded, ${data.failed} failed of ${data.total} total`;
             } catch(e) {
                 resultDiv.innerHTML = 'Error: ' + e.message;
             }
         }
+        
+        // WS update handler for settings page
+        window.onWSUpdate = function(path, data) {
+            if (path === '/admin/verify' || path === '/settings') {
+                const progressDiv = document.getElementById('verify-progress');
+                if (progressDiv && data.status) {
+                    if (data.status === 'starting') {
+                        progressDiv.innerHTML = 'Verification started...';
+                    } else if (data.status === 'complete') {
+                        progressDiv.innerHTML = `Complete: ${data.success} succeeded, ${data.failed} failed`;
+                    }
+                }
+            }
+        };
         
         async function reloadConfig() {
             const resultDiv = document.getElementById('action-result');

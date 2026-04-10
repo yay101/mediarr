@@ -1533,6 +1533,10 @@ func (s *Server) handleVerifyMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	verifier := storage.NewVerifier(s.app.DB(), storageManager)
+
+	// Broadcast start of verification
+	s.wsHub.BroadcastUpdate("/admin/verify", map[string]string{"status": "starting"})
+
 	results := verifier.VerifyAllMedia(r.Context())
 
 	var successCount, failCount int
@@ -1543,6 +1547,17 @@ func (s *Server) handleVerifyMedia(w http.ResponseWriter, r *http.Request) {
 			failCount++
 		}
 	}
+
+	// Broadcast completion
+	s.wsHub.BroadcastUpdate("/admin/verify", map[string]interface{}{
+		"status":  "complete",
+		"total":   len(results),
+		"success": successCount,
+		"failed":  failCount,
+	})
+
+	// Also refresh settings page
+	s.wsHub.BroadcastRefresh("/settings")
 
 	writeJSON(w, map[string]interface{}{
 		"total":   len(results),
@@ -1863,6 +1878,22 @@ func (s *Server) handleSearchWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go hub.HandleSearch(conn, query, mediaType, mediaID)
+}
+
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := websocket.Upgrade(w, r, nil, 0, 0)
+	if err != nil {
+		slog.Error("websocket upgrade failed", "error", err)
+		return
+	}
+
+	s.wsHub.HandleConnection(conn, user.ID)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
